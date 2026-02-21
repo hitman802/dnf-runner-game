@@ -16,7 +16,10 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="mobile-web-app-capable" content="yes">
     <title>DNF Runner Game</title>
     <style>
         * {
@@ -34,19 +37,45 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
             font-family: 'Courier New', monospace;
             overflow: hidden;
             touch-action: none;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+            position: fixed;
+            width: 100%;
+            height: 100%;
         }
         #gameCanvas {
             border: 2px solid #fff;
             background: #fff;
             display: block;
             box-shadow: 0 0 20px rgba(0,0,0,0.5);
-            max-width: 100vw;
-            max-height: 100vh;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
         }
-        @media (max-width: 800px) {
+
+        /* Desktop */
+        @media (min-width: 801px) {
             #gameCanvas {
-                width: 100vw !important;
-                height: 50vh !important;
+                width: 800px;
+                height: 400px;
+            }
+        }
+
+        /* Mobile - landscape */
+        @media (max-width: 800px) and (orientation: landscape) {
+            #gameCanvas {
+                width: 100vw;
+                height: 100vh;
+            }
+        }
+
+        /* Mobile - portrait */
+        @media (max-width: 800px) and (orientation: portrait) {
+            #gameCanvas {
+                width: 100vw;
+                height: calc(100vw / 2);
+                max-height: 60vh;
             }
         }
     </style>
@@ -57,6 +86,50 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
     <script>
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
+
+        // Disable image smoothing for crisp pixels on mobile
+        ctx.imageSmoothingEnabled = false;
+
+        // Handle canvas scaling for mobile
+        function resizeCanvas() {
+            // Keep internal resolution at 800x400
+            const baseWidth = 800;
+            const baseHeight = 400;
+
+            // Get viewport dimensions
+            const vw = window.innerWidth;
+            const vh = window.innerHeight;
+
+            // Calculate scale to fit screen while maintaining aspect ratio
+            const scaleX = vw / baseWidth;
+            const scaleY = vh / baseHeight;
+            const scale = Math.min(scaleX, scaleY);
+
+            // Set display size (CSS)
+            canvas.style.width = (baseWidth * scale) + 'px';
+            canvas.style.height = (baseHeight * scale) + 'px';
+        }
+
+        // Initial resize
+        resizeCanvas();
+
+        // Resize on orientation change or window resize
+        window.addEventListener('resize', resizeCanvas);
+        window.addEventListener('orientationchange', () => {
+            setTimeout(resizeCanvas, 100);
+        });
+
+        // Prevent scrolling on mobile
+        document.body.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+        }, { passive: false });
+
+        // Prevent pull-to-refresh on mobile
+        document.body.addEventListener('touchstart', (e) => {
+            if (e.touches.length > 1) {
+                e.preventDefault();
+            }
+        }, { passive: false });
 
         // Game states
         const GAME_STATE = {
@@ -1258,6 +1331,7 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
         // Touch/Mobile controls
         canvas.addEventListener('touchstart', (e) => {
             e.preventDefault();
+            e.stopPropagation();
 
             if (gameState === GAME_STATE.START) {
                 gameState = GAME_STATE.PLAYING;
@@ -1270,10 +1344,12 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
                 gameState = GAME_STATE.PLAYING;
                 resetGame();
             }
-        });
+        }, { passive: false });
 
         // Click controls (for desktop)
         canvas.addEventListener('click', (e) => {
+            e.preventDefault();
+
             if (gameState === GAME_STATE.START) {
                 gameState = GAME_STATE.PLAYING;
                 resetGame();
