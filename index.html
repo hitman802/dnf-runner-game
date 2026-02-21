@@ -1,0 +1,1295 @@
+<!DOCTYPE html>
+<!--
+DNF RUNNER GAME - Mobile Instructions:
+
+To play on mobile phone:
+1. Download this HTML file to your device
+2. Open your phone's file manager or downloads folder
+3. Tap on the file "runner-game.html"
+4. Select "Open with..." and choose your web browser (Chrome, Safari, Firefox, etc.)
+5. The game will open in the browser - tap anywhere to jump!
+
+Alternative: Send this file to yourself via email and open it from the email app.
+
+Note: HTML files cannot run directly from Telegram - they must be opened in a web browser.
+-->
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>DNF Runner Game</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+        body {
+            background: #1a1a1a;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Courier New', monospace;
+            overflow: hidden;
+            touch-action: none;
+        }
+        #gameCanvas {
+            border: 2px solid #fff;
+            background: #fff;
+            display: block;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+            max-width: 100vw;
+            max-height: 100vh;
+        }
+        @media (max-width: 800px) {
+            #gameCanvas {
+                width: 100vw !important;
+                height: 50vh !important;
+            }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="400"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Game states
+        const GAME_STATE = {
+            START: 'start',
+            PLAYING: 'playing',
+            GAME_OVER: 'gameover'
+        };
+
+        // Game variables
+        let gameState = GAME_STATE.START;
+        let gameSpeed = 6;
+        let gravity = 0.8;
+        let score = 0;
+        let highScore = 0;
+        let lives = 1;
+        let frameCount = 0;
+        let damageFlash = 0;
+        let runAnimation = 0;
+
+        // Running metrics
+        let distanceMeters = 0; // Total distance in meters
+        let totalBeersCollected = 0;
+        let sessionBeersCollected = 0;
+        let achievementDisplay = null;
+        let achievementTimer = 0;
+        let lastPace = '0:00';
+        let paceUpdateCounter = 0;
+        let finalMetrics = null; // Store final metrics when game ends
+        let bestTime = 0; // Best time (highest score)
+
+        // Achievements
+        const BEER_ACHIEVEMENTS = [
+            { beers: 5, name: 'Beer Lover', unlocked: false },
+            { beers: 10, name: 'Beer Expert', unlocked: false },
+            { beers: 15, name: 'Beer Master', unlocked: false },
+            { beers: 25, name: 'Beer Legend', unlocked: false },
+            { beers: 50, name: 'Beer Champion', unlocked: false }
+        ];
+
+        const DISTANCE_ACHIEVEMENTS = [
+            { distance: 5, name: '5K Runner', unlocked: false },
+            { distance: 10, name: '10K Runner', unlocked: false },
+            { distance: 21, name: 'Half Marathon', unlocked: false },
+            { distance: 42, name: 'Marathon Runner', unlocked: false },
+            { distance: 50, name: 'Ultra Runner', unlocked: false },
+            { distance: 84, name: 'Double Marathon', unlocked: false },
+            { distance: 100, name: '100K Legend', unlocked: false }
+        ];
+
+        // Player
+        const player = {
+            x: 100,
+            y: 0,
+            width: 30,
+            height: 40,
+            velocityY: 0,
+            jumping: false,
+            onPlatform: false,
+            doubleJumpAvailable: true,
+            jumpPower: -15,
+            gender: Math.random() > 0.5 ? 'male' : 'female'
+        };
+
+        // Ground level
+        const groundY = canvas.height - 80;
+        player.y = groundY - player.height;
+
+        // Background elements
+        let hills = [];
+        let distantHills = [];
+        let trees = [];
+        let clouds = [];
+        let grass = [];
+
+        // Arrays for game objects
+        let obstacles = [];
+        let platforms = [];
+        let collectibles = [];
+
+        // Obstacle types
+        const OBSTACLE_TYPES = {
+            HEDGEHOG: 'hedgehog',
+            ABYSS: 'abyss'
+        };
+
+        // Initialize background
+        function initBackground() {
+            distantHills = [];
+            for (let i = 0; i < 4; i++) {
+                distantHills.push({
+                    x: i * 400 - 200,
+                    points: generateHillPoints(400, 60 + Math.random() * 30)
+                });
+            }
+
+            hills = [];
+            for (let i = 0; i < 5; i++) {
+                hills.push({
+                    x: i * 300 - 150,
+                    points: generateHillPoints(300, 50 + Math.random() * 40)
+                });
+            }
+
+            trees = [];
+            for (let i = 0; i < 12; i++) {
+                trees.push({
+                    x: i * 120 + Math.random() * 60,
+                    height: 35 + Math.random() * 25,
+                    type: Math.random() > 0.5 ? 'pine' : 'oak'
+                });
+            }
+
+            grass = [];
+            for (let i = 0; i < 30; i++) {
+                grass.push({
+                    x: i * 50 + Math.random() * 30,
+                    blades: 3 + Math.floor(Math.random() * 4)
+                });
+            }
+
+            clouds = [];
+            for (let i = 0; i < 6; i++) {
+                clouds.push({
+                    x: i * 200 + Math.random() * 100,
+                    y: 20 + Math.random() * 70,
+                    size: 25 + Math.random() * 20
+                });
+            }
+        }
+
+        // Calculate running metrics
+        function calculateMetrics() {
+            // Increase distance very fast - multiply by 20 for quick progression
+            // Distance is for visual satisfaction and achievement unlocks
+            distanceMeters += (gameSpeed / 10) * (1/60) * 20;
+
+            const distanceKm = distanceMeters / 1000;
+            const timeMinutes = score / 60;
+
+            // Realistic speed display range: 8 km/h to 20 km/h
+            // Speed calculation for DISPLAY only (doesn't affect distance or pace)
+            // At gameSpeed 6: 8 km/h
+            // At gameSpeed 10: ~12 km/h
+            // At gameSpeed 20: ~18 km/h (caps around 20)
+            const baseSpeed = 8; // Start from 8 km/h instead of 6
+            const speedGrowth = (gameSpeed - 6) * 0.8; // Slower growth
+            const speedKmH = Math.min(20, baseSpeed + speedGrowth);
+
+            // Update pace only every 30 frames (0.5 seconds) to prevent blinking
+            // Pace uses the display speed for consistency
+            // At 8 km/h: 60/8 = 7:30 min/km
+            // At 12 km/h: 60/12 = 5:00 min/km
+            // At 15 km/h: 60/15 = 4:00 min/km
+            // At 20 km/h: 60/20 = 3:00 min/km
+            paceUpdateCounter++;
+            if (paceUpdateCounter >= 30) {
+                paceUpdateCounter = 0;
+                const paceMinPerKm = speedKmH > 0 ? 60 / speedKmH : 0;
+                const paceMin = Math.floor(paceMinPerKm);
+                const paceSec = Math.floor((paceMinPerKm - paceMin) * 60);
+                lastPace = `${paceMin}:${paceSec.toString().padStart(2, '0')}`;
+            }
+
+            return {
+                distance: distanceKm.toFixed(2),
+                speed: speedKmH.toFixed(1),
+                pace: lastPace
+            };
+        }
+
+        // Check and unlock achievements
+        function checkAchievements() {
+            // Check beer achievements
+            for (let achievement of BEER_ACHIEVEMENTS) {
+                if (!achievement.unlocked && totalBeersCollected >= achievement.beers) {
+                    achievement.unlocked = true;
+                    achievementDisplay = achievement;
+                    achievementTimer = 180; // Show for 3 seconds at 60fps
+                    return; // Show one at a time
+                }
+            }
+
+            // Check distance achievements
+            const distanceKm = distanceMeters / 1000;
+            for (let achievement of DISTANCE_ACHIEVEMENTS) {
+                if (!achievement.unlocked && distanceKm >= achievement.distance) {
+                    achievement.unlocked = true;
+                    achievementDisplay = achievement;
+                    achievementTimer = 180; // Show for 3 seconds at 60fps
+                    return; // Show one at a time
+                }
+            }
+        }
+
+        // Generate smooth hill points
+        function generateHillPoints(width, maxHeight) {
+            const points = [];
+            const segments = 8;
+            for (let i = 0; i <= segments; i++) {
+                const x = (width / segments) * i;
+                const y = Math.sin((i / segments) * Math.PI) * maxHeight;
+                points.push({ x, y });
+            }
+            return points;
+        }
+
+        // Draw smooth hills
+        function drawHill(baseX, baseY, points, color) {
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.moveTo(baseX, baseY);
+
+            for (let i = 0; i < points.length; i++) {
+                const point = points[i];
+                if (i === 0) {
+                    ctx.lineTo(baseX + point.x, baseY - point.y);
+                } else {
+                    const prevPoint = points[i - 1];
+                    const cpX = baseX + (prevPoint.x + point.x) / 2;
+                    const cpY = baseY - (prevPoint.y + point.y) / 2;
+                    ctx.quadraticCurveTo(
+                        baseX + prevPoint.x, baseY - prevPoint.y,
+                        cpX, cpY
+                    );
+                }
+            }
+
+            const lastPoint = points[points.length - 1];
+            ctx.lineTo(baseX + lastPoint.x, baseY);
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        // Draw background
+        function drawBackground() {
+            const gradient = ctx.createLinearGradient(0, 0, 0, groundY);
+            gradient.addColorStop(0, '#f0f0f0');
+            gradient.addColorStop(0.6, '#e8e8e8');
+            gradient.addColorStop(1, '#d8d8d8');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, canvas.width, groundY);
+
+            clouds.forEach(cloud => {
+                ctx.fillStyle = '#c8c8c8';
+                ctx.beginPath();
+                ctx.arc(cloud.x, cloud.y + cloud.size * 0.3, cloud.size * 0.4, 0, Math.PI * 2);
+                ctx.arc(cloud.x + cloud.size * 0.5, cloud.y, cloud.size * 0.5, 0, Math.PI * 2);
+                ctx.arc(cloud.x + cloud.size, cloud.y + cloud.size * 0.2, cloud.size * 0.45, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = '#d8d8d8';
+                ctx.beginPath();
+                ctx.arc(cloud.x + cloud.size * 0.3, cloud.y + cloud.size * 0.1, cloud.size * 0.2, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            distantHills.forEach(hill => {
+                drawHill(hill.x, groundY, hill.points, '#b8b8b8');
+            });
+
+            hills.forEach(hill => {
+                drawHill(hill.x, groundY, hill.points, '#989898');
+
+                ctx.fillStyle = '#888888';
+                ctx.globalAlpha = 0.3;
+                drawHill(hill.x + hill.points[0].x, groundY, hill.points.slice(4), '#888888');
+                ctx.globalAlpha = 1;
+            });
+
+            trees.forEach(tree => {
+                if (tree.type === 'pine') {
+                    ctx.fillStyle = '#2a2a2a';
+                    ctx.fillRect(tree.x + 3, groundY - tree.height, 4, tree.height);
+
+                    ctx.fillStyle = '#4a4a4a';
+                    for (let i = 0; i < 3; i++) {
+                        const offset = i * (tree.height / 4);
+                        ctx.beginPath();
+                        ctx.moveTo(tree.x + 5, groundY - tree.height - 8 + offset);
+                        ctx.lineTo(tree.x - 6, groundY - tree.height + 10 + offset);
+                        ctx.lineTo(tree.x + 16, groundY - tree.height + 10 + offset);
+                        ctx.closePath();
+                        ctx.fill();
+                    }
+
+                    ctx.fillStyle = '#5a5a5a';
+                    ctx.beginPath();
+                    ctx.moveTo(tree.x + 5, groundY - tree.height - 8);
+                    ctx.lineTo(tree.x, groundY - tree.height + 2);
+                    ctx.lineTo(tree.x + 5, groundY - tree.height + 2);
+                    ctx.closePath();
+                    ctx.fill();
+                } else {
+                    ctx.fillStyle = '#3a3a3a';
+                    ctx.fillRect(tree.x, groundY - tree.height, 8, tree.height);
+
+                    ctx.fillStyle = '#5a5a5a';
+                    ctx.beginPath();
+                    ctx.arc(tree.x - 2, groundY - tree.height - 5, 8, 0, Math.PI * 2);
+                    ctx.arc(tree.x + 4, groundY - tree.height - 10, 10, 0, Math.PI * 2);
+                    ctx.arc(tree.x + 10, groundY - tree.height - 5, 8, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    ctx.fillStyle = '#6a6a6a';
+                    ctx.beginPath();
+                    ctx.arc(tree.x + 2, groundY - tree.height - 8, 5, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            });
+        }
+
+        // Update background parallax
+        function updateBackground() {
+            clouds.forEach(cloud => {
+                cloud.x -= gameSpeed * 0.15;
+                if (cloud.x + cloud.size * 1.5 < 0) {
+                    cloud.x = canvas.width + 50;
+                    cloud.y = 20 + Math.random() * 70;
+                }
+            });
+
+            distantHills.forEach(hill => {
+                hill.x -= gameSpeed * 0.25;
+                if (hill.x + 400 < 0) {
+                    hill.x = canvas.width;
+                    hill.points = generateHillPoints(400, 60 + Math.random() * 30);
+                }
+            });
+
+            hills.forEach(hill => {
+                hill.x -= gameSpeed * 0.4;
+                if (hill.x + 300 < 0) {
+                    hill.x = canvas.width;
+                    hill.points = generateHillPoints(300, 50 + Math.random() * 40);
+                }
+            });
+
+            trees.forEach(tree => {
+                tree.x -= gameSpeed * 0.65;
+                if (tree.x < -20) {
+                    tree.x = canvas.width + 20;
+                    tree.height = 35 + Math.random() * 25;
+                    tree.type = Math.random() > 0.5 ? 'pine' : 'oak';
+                }
+            });
+
+            grass.forEach(g => {
+                g.x -= gameSpeed;
+                if (g.x < -10) {
+                    g.x = canvas.width;
+                    g.blades = 3 + Math.floor(Math.random() * 4);
+                }
+            });
+        }
+
+        // Draw player
+        function drawPlayer() {
+            const animOffset = player.jumping ? 0 : Math.sin(runAnimation * 0.3) * 3;
+
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+            ctx.beginPath();
+            ctx.ellipse(player.x + 15, groundY - 2, 12, 4, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = '#4a4a4a';
+            ctx.fillRect(player.x + 8, player.y + 15, 14, 10);
+            ctx.fillStyle = '#3a3a3a';
+            ctx.fillRect(player.x + 8, player.y + 15, 14, 2);
+
+            ctx.fillStyle = '#000';
+            ctx.fillRect(player.x + 10, player.y + 5, 10, 11);
+
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(player.x + 13, player.y + 8, 1, 3);
+            ctx.fillRect(player.x + 16, player.y + 8, 1, 3);
+
+            ctx.fillStyle = '#e8d4c4';
+            ctx.fillRect(player.x + 12, player.y + 2, 6, 3);
+
+            ctx.fillStyle = '#e8d4c4';
+            ctx.fillRect(player.x + 9, player.y - 2, 12, 10);
+
+            ctx.fillStyle = '#2a2a2a';
+            ctx.fillRect(player.x + 11, player.y + 1, 2, 1);
+            ctx.fillRect(player.x + 17, player.y + 1, 2, 1);
+
+            if (player.gender === 'female') {
+                ctx.fillStyle = '#3a3a3a';
+                ctx.fillRect(player.x + 20, player.y, 3, 8);
+                ctx.fillRect(player.x + 21, player.y + 8, 2, 4);
+            }
+
+            ctx.fillStyle = '#2a2a2a';
+            ctx.fillRect(player.x + 7, player.y - 6, 16, 4);
+            ctx.fillRect(player.x + 10, player.y - 9, 10, 3);
+            ctx.fillStyle = '#1a1a1a';
+            ctx.fillRect(player.x + 7, player.y - 3, 16, 1);
+
+            ctx.fillStyle = '#e8d4c4';
+            if (player.jumping) {
+                ctx.fillRect(player.x + 4, player.y + 8, 4, 9);
+                ctx.fillRect(player.x + 22, player.y + 8, 4, 9);
+                ctx.fillRect(player.x + 4, player.y + 16, 4, 3);
+                ctx.fillRect(player.x + 22, player.y + 16, 4, 3);
+            } else {
+                ctx.fillRect(player.x + 6, player.y + 8 + animOffset, 4, 9);
+                ctx.fillRect(player.x + 20, player.y + 8 - animOffset, 4, 9);
+                ctx.fillRect(player.x + 6, player.y + 16 + animOffset, 4, 3);
+                ctx.fillRect(player.x + 20, player.y + 16 - animOffset, 4, 3);
+            }
+
+            ctx.fillStyle = '#e8d4c4';
+            if (player.jumping) {
+                ctx.fillRect(player.x + 10, player.y + 25, 4, 9);
+                ctx.fillRect(player.x + 16, player.y + 25, 4, 9);
+            } else {
+                ctx.fillRect(player.x + 10, player.y + 25 - animOffset, 4, 10 + animOffset);
+                ctx.fillRect(player.x + 16, player.y + 25 + animOffset, 4, 10 - animOffset);
+            }
+
+            ctx.fillStyle = '#2a2a2a';
+            if (!player.jumping) {
+                ctx.fillRect(player.x + 8, player.y + 35 - animOffset, 7, 5);
+                ctx.fillStyle = '#4a4a4a';
+                ctx.fillRect(player.x + 8, player.y + 35 - animOffset, 7, 2);
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(player.x + 13, player.y + 36 - animOffset, 2, 1);
+
+                ctx.fillStyle = '#2a2a2a';
+                ctx.fillRect(player.x + 16, player.y + 35 + animOffset, 7, 5);
+                ctx.fillStyle = '#4a4a4a';
+                ctx.fillRect(player.x + 16, player.y + 35 + animOffset, 7, 2);
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(player.x + 21, player.y + 36 + animOffset, 2, 1);
+            } else {
+                ctx.fillRect(player.x + 8, player.y + 33, 7, 5);
+                ctx.fillRect(player.x + 16, player.y + 33, 7, 5);
+                ctx.fillStyle = '#4a4a4a';
+                ctx.fillRect(player.x + 8, player.y + 33, 7, 2);
+                ctx.fillRect(player.x + 16, player.y + 33, 7, 2);
+            }
+        }
+
+        // Draw hedgehog with animation
+        function drawHedgehog(x, y) {
+            // Animation offset for movement
+            const walkAnim = Math.sin(frameCount * 0.2) * 1.5;
+            const spikeAnim = Math.sin(frameCount * 0.15) * 0.5;
+
+            // Shadow
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+            ctx.beginPath();
+            ctx.ellipse(x + 16, groundY - 1, 10, 3, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = '#2a2a2a';
+            // Body (slightly bobs up and down)
+            ctx.fillRect(x, y + 12 + walkAnim * 0.5, 28, 13);
+            ctx.fillRect(x + 2, y + 10 + walkAnim * 0.5, 24, 2);
+
+            // Spikes with variety and animation
+            for (let i = 0; i < 6; i++) {
+                const spikeHeight = 8 + (i % 2) * 2 + spikeAnim;
+                ctx.fillRect(x + i * 4.5 + 1, y + 12 - spikeHeight + walkAnim * 0.5, 3, spikeHeight);
+            }
+
+            // Spike tips (lighter)
+            ctx.fillStyle = '#3a3a3a';
+            for (let i = 0; i < 6; i++) {
+                const spikeHeight = 8 + (i % 2) * 2 + spikeAnim;
+                ctx.fillRect(x + i * 4.5 + 1, y + 12 - spikeHeight + walkAnim * 0.5, 3, 2);
+            }
+
+            // Face
+            ctx.fillStyle = '#3a3a3a';
+            ctx.fillRect(x + 22, y + 15 + walkAnim * 0.5, 9, 10);
+
+            // Ear
+            ctx.fillStyle = '#2a2a2a';
+            ctx.fillRect(x + 24, y + 14 + walkAnim * 0.5, 3, 3);
+
+            // Eye
+            ctx.fillStyle = '#000';
+            ctx.fillRect(x + 25, y + 17 + walkAnim * 0.5, 2, 2);
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(x + 26, y + 17 + walkAnim * 0.5, 1, 1);
+
+            // Nose
+            ctx.fillStyle = '#1a1a1a';
+            ctx.fillRect(x + 29, y + 19 + walkAnim * 0.5, 2, 2);
+
+            // Animated legs (walking motion)
+            ctx.fillStyle = '#2a2a2a';
+            ctx.fillRect(x + 4, y + 23 - walkAnim + walkAnim * 0.5, 3, 4 + walkAnim);
+            ctx.fillRect(x + 22, y + 23 + walkAnim + walkAnim * 0.5, 3, 4 - walkAnim);
+        }
+
+        // Draw abyss
+        function drawAbyss(obstacle) {
+            const x = obstacle.x;
+            const width = obstacle.width;
+            const depth = obstacle.depth || 100;
+
+            const depthGradient = ctx.createLinearGradient(0, groundY, 0, groundY + depth);
+            depthGradient.addColorStop(0, '#2a2a2a');
+            depthGradient.addColorStop(0.5, '#1a1a1a');
+            depthGradient.addColorStop(1, '#000');
+            ctx.fillStyle = depthGradient;
+            ctx.fillRect(x, groundY, width, depth);
+
+            ctx.fillStyle = '#3a3a3a';
+            for (let i = 0; i < depth / 10; i++) {
+                const rockY = groundY + i * 10;
+                const rockWidth = 8 + Math.random() * 4;
+                ctx.fillRect(x, rockY, rockWidth, 8);
+            }
+
+            for (let i = 0; i < depth / 10; i++) {
+                const rockY = groundY + i * 10;
+                const rockWidth = 8 + Math.random() * 4;
+                ctx.fillRect(x + width - rockWidth, rockY, rockWidth, 8);
+            }
+
+            ctx.strokeStyle = '#4a4a4a';
+            ctx.lineWidth = 2;
+            for (let i = 0; i < 4; i++) {
+                ctx.beginPath();
+                ctx.moveTo(x + 3, groundY + 10 + i * 25);
+                ctx.lineTo(x + 12, groundY + 18 + i * 25);
+                ctx.lineTo(x + 8, groundY + 28 + i * 25);
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.moveTo(x + width - 3, groundY + 15 + i * 25);
+                ctx.lineTo(x + width - 12, groundY + 23 + i * 25);
+                ctx.lineTo(x + width - 8, groundY + 33 + i * 25);
+                ctx.stroke();
+            }
+
+            ctx.fillStyle = '#2a2a2a';
+            for (let i = 0; i < 3; i++) {
+                ctx.fillRect(x + 5, groundY + 20 + i * 30, 15, 4);
+                ctx.fillRect(x + width - 20, groundY + 35 + i * 30, 15, 4);
+            }
+
+            ctx.fillStyle = '#6a6a6a';
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 1;
+            for (let i = 0; i < 6; i++) {
+                ctx.fillRect(x - 3, groundY - 2 + i * 14, 6, 10);
+                ctx.strokeRect(x - 3, groundY - 2 + i * 14, 6, 10);
+
+                ctx.fillRect(x + width - 3, groundY - 2 + i * 14, 6, 10);
+                ctx.strokeRect(x + width - 3, groundY - 2 + i * 14, 6, 10);
+            }
+
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 1;
+            for (let i = 0; i < 6; i++) {
+                ctx.beginPath();
+                ctx.moveTo(x - 3, groundY - 2 + i * 14);
+                ctx.lineTo(x + 3, groundY + 8 + i * 14);
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.moveTo(x + width - 3, groundY - 2 + i * 14);
+                ctx.lineTo(x + width + 3, groundY + 8 + i * 14);
+                ctx.stroke();
+            }
+
+            if (depth > 60) {
+                ctx.fillStyle = '#1a1a1a';
+                for (let i = 0; i < width / 15; i++) {
+                    const rockX = x + i * 15 + 5;
+                    const rockY = groundY + depth - 12;
+                    ctx.beginPath();
+                    ctx.moveTo(rockX, rockY + 8);
+                    ctx.lineTo(rockX + 3, rockY);
+                    ctx.lineTo(rockX + 7, rockY + 2);
+                    ctx.lineTo(rockX + 10, rockY + 8);
+                    ctx.closePath();
+                    ctx.fill();
+
+                    ctx.fillStyle = '#2a2a2a';
+                    ctx.fillRect(rockX + 1, rockY + 2, 2, 3);
+                    ctx.fillStyle = '#1a1a1a';
+                }
+            }
+
+            ctx.fillStyle = 'rgba(42, 42, 42, 0.3)';
+            ctx.fillRect(x, groundY, width, 20);
+        }
+
+        // Draw platform
+        function drawPlatform(platform) {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+            ctx.fillRect(platform.x + 2, platform.y + 2, platform.width, 8);
+
+            ctx.fillStyle = '#3a3a3a';
+            ctx.fillRect(platform.x, platform.y, platform.width, 10);
+
+            ctx.fillStyle = '#5a5a5a';
+            ctx.fillRect(platform.x, platform.y, platform.width, 3);
+
+            ctx.fillStyle = '#6a6a6a';
+            ctx.fillRect(platform.x, platform.y, platform.width, 1);
+
+            ctx.strokeStyle = '#2a2a2a';
+            ctx.lineWidth = 2;
+
+            for (let i = 0; i < 3; i++) {
+                ctx.strokeRect(platform.x + 5, platform.y + 10 + i * 8, 3, 6);
+            }
+
+            for (let i = 0; i < 3; i++) {
+                ctx.strokeRect(platform.x + platform.width - 8, platform.y + 10 + i * 8, 3, 6);
+            }
+
+            ctx.fillStyle = '#2a2a2a';
+            for (let i = 0; i < platform.width / 10; i++) {
+                ctx.fillRect(platform.x + 5 + i * 10, platform.y + 5, 2, 2);
+            }
+        }
+
+        // Draw beer
+        function drawBeer(x, y) {
+            ctx.fillStyle = '#d8d8d8';
+            ctx.fillRect(x, y + 5, 16, 22);
+
+            ctx.fillStyle = '#e8e8e8';
+            ctx.fillRect(x + 2, y + 7, 12, 18);
+
+            const beerGradient = ctx.createLinearGradient(x, y + 12, x, y + 25);
+            beerGradient.addColorStop(0, '#5a5a5a');
+            beerGradient.addColorStop(1, '#4a4a4a');
+            ctx.fillStyle = beerGradient;
+            ctx.fillRect(x + 3, y + 14, 10, 11);
+
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(x + 3, y + 8, 10, 6);
+            ctx.fillStyle = '#f0f0f0';
+            ctx.fillRect(x + 4, y + 9, 8, 3);
+
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(x + 5, y + 8, 2, 2);
+            ctx.fillRect(x + 9, y + 9, 2, 2);
+
+            ctx.strokeStyle = '#2a2a2a';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(x + 18, y + 16, 6, -Math.PI/2, Math.PI/2);
+            ctx.stroke();
+
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+            ctx.fillRect(x + 2, y + 7, 2, 12);
+        }
+
+        // Draw ground
+        function drawGround() {
+            ctx.fillStyle = '#d0d0d0';
+            ctx.fillRect(0, groundY, canvas.width, canvas.height - groundY);
+
+            ctx.fillStyle = '#e0e0e0';
+            ctx.fillRect(0, groundY, canvas.width, 8);
+
+            ctx.strokeStyle = '#b8b8b8';
+            ctx.lineWidth = 1;
+            for (let i = 0; i < canvas.width; i += 40) {
+                const offset = (frameCount * gameSpeed * 0.5) % 40;
+                ctx.beginPath();
+                ctx.moveTo(i - offset, groundY);
+                ctx.lineTo(i - offset, canvas.height);
+                ctx.stroke();
+            }
+
+            grass.forEach(g => {
+                ctx.strokeStyle = '#a0a0a0';
+                ctx.lineWidth = 1;
+                for (let i = 0; i < g.blades; i++) {
+                    ctx.beginPath();
+                    ctx.moveTo(g.x + i * 2, groundY);
+                    ctx.lineTo(g.x + i * 2 - 1, groundY - 4);
+                    ctx.stroke();
+                }
+            });
+
+            ctx.fillStyle = '#a8a8a8';
+            for (let i = 0; i < canvas.width; i += 80) {
+                const x = i - (frameCount * gameSpeed) % 80;
+                ctx.fillRect(x, groundY + 10, 4, 3);
+                ctx.fillRect(x + 30, groundY + 12, 3, 2);
+            }
+        }
+
+        // Draw DNF logo
+        function drawDNFLogo(x, y, size) {
+            ctx.fillStyle = '#000';
+            ctx.font = `bold ${size}px Courier New`;
+            ctx.fillText('DNF', x, y);
+            ctx.fillRect(x, y + 2, size * 2, 2);
+        }
+
+        // Draw UI
+        function drawUI() {
+            // Use final metrics if game is over, otherwise calculate display speed properly
+            const metrics = gameState === GAME_STATE.GAME_OVER && finalMetrics ? finalMetrics : (() => {
+                // Calculate display speed (8-20 km/h range)
+                const baseSpeed = 8;
+                const speedGrowth = (gameSpeed - 6) * 0.8;
+                const displaySpeed = Math.min(20, baseSpeed + speedGrowth);
+
+                return {
+                    distance: (distanceMeters / 1000).toFixed(2),
+                    speed: displaySpeed.toFixed(1),
+                    pace: lastPace
+                };
+            })();
+
+            drawDNFLogo(canvas.width - 80, 25, 16);
+
+            ctx.fillStyle = '#000';
+            ctx.font = '16px Courier New';
+            ctx.fillText(`${metrics.distance} km`, 20, 25);
+            ctx.fillText(`${metrics.speed} km/h`, 20, 44);
+            ctx.fillText(`${metrics.pace} /km`, 20, 63);
+            ctx.fillText(`Lives: ${lives}`, 20, 82);
+            // Beers counter removed from display but still tracked in background
+
+            // Achievement notification
+            if (achievementTimer > 0) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                ctx.fillRect(canvas.width / 2 - 150, 80, 300, 60);
+
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 20px Courier New';
+                ctx.textAlign = 'center';
+                ctx.fillText('ACHIEVEMENT UNLOCKED!', canvas.width / 2, 105);
+                ctx.font = '16px Courier New';
+                ctx.fillText(achievementDisplay.name, canvas.width / 2, 130);
+                ctx.textAlign = 'left';
+            }
+
+            // Damage flash
+            if (damageFlash > 0) {
+                ctx.fillStyle = `rgba(0, 0, 0, ${damageFlash / 40})`;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 32px Courier New';
+                ctx.textAlign = 'center';
+                ctx.fillText('-1 LIFE', canvas.width / 2, canvas.height / 2);
+                ctx.strokeStyle = '#000';
+                ctx.lineWidth = 2;
+                ctx.strokeText('-1 LIFE', canvas.width / 2, canvas.height / 2);
+                ctx.textAlign = 'left';
+            }
+        }
+
+        // Draw start screen
+        function drawStartScreen() {
+            ctx.fillStyle = '#f5f5f5';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.fillStyle = '#000';
+            ctx.font = 'bold 72px Courier New';
+            ctx.textAlign = 'center';
+            ctx.fillText('DNF', canvas.width / 2, 80);
+            ctx.fillRect(canvas.width / 2 - 70, 88, 140, 4);
+
+            ctx.font = '24px Courier New';
+            ctx.fillText('RUNNING CLUB', canvas.width / 2, 118);
+
+            ctx.font = 'bold 36px Courier New';
+            ctx.fillText('RUNNER GAME', canvas.width / 2, 165);
+
+            ctx.font = '16px Courier New';
+            ctx.fillText('Instructions:', canvas.width / 2, 200);
+            ctx.font = '13px Courier New';
+            ctx.fillText('SPACE/TAP - Jump (double jump allowed)', canvas.width / 2, 222);
+            ctx.fillText('Avoid hedgehogs and abyss', canvas.width / 2, 242);
+            ctx.fillText('Use platforms over wide gaps', canvas.width / 2, 262);
+            ctx.fillText('Collect beer for extra lives', canvas.width / 2, 282);
+            ctx.fillText('Speed increases over time', canvas.width / 2, 302);
+
+            ctx.font = 'bold 20px Courier New';
+            ctx.fillText('SPACE/TAP to Start', canvas.width / 2, 350);
+
+            ctx.textAlign = 'left';
+        }
+
+        // Draw game over screen
+        function drawGameOverScreen() {
+            // Use stored final metrics
+            const metrics = finalMetrics || { distance: '0.00', speed: '0.0', pace: '0:00' };
+
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 48px Courier New';
+            ctx.textAlign = 'center';
+            ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2 - 120);
+
+            ctx.font = 'bold 24px Courier New';
+            ctx.fillText('DNF RUNNING CLUB', canvas.width / 2, canvas.height / 2 - 80);
+
+            // Main stat - Distance (larger)
+            ctx.font = 'bold 32px Courier New';
+            ctx.fillText(`${metrics.distance} km`, canvas.width / 2, canvas.height / 2 - 35);
+
+            // Other stats (smaller)
+            ctx.font = '18px Courier New';
+            ctx.fillText(`Speed: ${metrics.speed} km/h`, canvas.width / 2, canvas.height / 2 + 5);
+            ctx.fillText(`Beers: ${sessionBeersCollected}`, canvas.width / 2, canvas.height / 2 + 30);
+
+            const playedMinutes = Math.floor(score / 60);
+            const playedSeconds = Math.floor(score % 60);
+            ctx.fillText(`Time: ${playedMinutes}:${playedSeconds.toString().padStart(2, '0')}`, canvas.width / 2, canvas.height / 2 + 55);
+
+            const bestMinutes = Math.floor(bestTime / 60);
+            const bestSeconds = Math.floor(bestTime % 60);
+            ctx.fillText(`Best: ${bestMinutes}:${bestSeconds.toString().padStart(2, '0')}`, canvas.width / 2, canvas.height / 2 + 80);
+
+            ctx.font = '16px Courier New';
+            ctx.fillText('SPACE/TAP to Restart', canvas.width / 2, canvas.height / 2 + 115);
+
+            ctx.textAlign = 'left';
+        }
+
+        // Create obstacle
+        function createObstacle() {
+            const type = Math.random() < 0.5 ? OBSTACLE_TYPES.HEDGEHOG : OBSTACLE_TYPES.ABYSS;
+
+            if (type === OBSTACLE_TYPES.HEDGEHOG) {
+                obstacles.push({
+                    type: OBSTACLE_TYPES.HEDGEHOG,
+                    x: canvas.width,
+                    y: groundY - 27,
+                    width: 31,
+                    height: 27,
+                    moveDirection: Math.random() > 0.5 ? 1 : -1, // Random direction
+                    moveSpeed: 0.5 + Math.random() * 1, // Random speed
+                    moveRange: 30 + Math.random() * 20, // How far they move
+                    originalX: canvas.width,
+                    offsetX: 0
+                });
+            } else {
+                // More abyss variety - 8 different types
+                const rand = Math.random();
+                let width, depth;
+
+                if (rand < 0.10) {
+                    // Tiny - very easy, shallow
+                    width = 40;
+                    depth = 50 + Math.random() * 15;
+                } else if (rand < 0.20) {
+                    // Very narrow - easy single jump, moderate depth
+                    width = 55;
+                    depth = 60 + Math.random() * 25;
+                } else if (rand < 0.32) {
+                    // Narrow - single jump, varied depth
+                    width = 75;
+                    depth = 70 + Math.random() * 40;
+                } else if (rand < 0.45) {
+                    // Medium-small - requires timing, deeper
+                    width = 95;
+                    depth = 80 + Math.random() * 50;
+                } else if (rand < 0.58) {
+                    // Medium - double jump recommended, deep
+                    width = 115;
+                    depth = 90 + Math.random() * 60;
+                } else if (rand < 0.71) {
+                    // Medium-large - requires double jump, very deep
+                    width = 135;
+                    depth = 100 + Math.random() * 70;
+                } else if (rand < 0.85) {
+                    // Large - requires precise double jump (no platform), bottomless look
+                    width = 155;
+                    depth = 120 + Math.random() * 80;
+                } else {
+                    // Very large - REQUIRES platform, extremely deep
+                    width = 180 + Math.random() * 40;
+                    depth = 140 + Math.random() * 100;
+                }
+
+                obstacles.push({
+                    type: OBSTACLE_TYPES.ABYSS,
+                    x: canvas.width,
+                    y: groundY,
+                    width: width,
+                    height: canvas.height - groundY,
+                    depth: depth
+                });
+
+                // Only add platforms to gaps that CANNOT be double-jumped
+                // Double jump can cover approximately 160 pixels with good timing
+                if (width > 165) {
+                    const numPlatforms = width > 200 ? 2 : 1;
+                    for (let i = 0; i < numPlatforms; i++) {
+                        platforms.push({
+                            x: canvas.width + 40 + (i * (width - 80) / numPlatforms),
+                            y: groundY - 55 - Math.random() * 18,
+                            width: 55,
+                            height: 10,
+                            abyssId: obstacles.length - 1
+                        });
+                    }
+                }
+            }
+        }
+
+        // Create collectible
+        function createCollectible() {
+            collectibles.push({
+                x: canvas.width,
+                y: groundY - 70 - Math.random() * 40,
+                width: 20,
+                height: 30,
+                collected: false
+            });
+        }
+
+        // Check collision
+        function checkCollision(rect1, rect2) {
+            return rect1.x < rect2.x + rect2.width &&
+                   rect1.x + rect1.width > rect2.x &&
+                   rect1.y < rect2.y + rect2.height &&
+                   rect1.y + rect1.height > rect2.y;
+        }
+
+        // Take damage
+        function takeDamage() {
+            lives--;
+            damageFlash = 30;
+            if (lives <= 0) {
+                gameState = GAME_STATE.GAME_OVER;
+                // Update best time
+                if (score > bestTime) {
+                    bestTime = score;
+                }
+                // Store final metrics when game ends
+                finalMetrics = calculateMetrics();
+            }
+        }
+
+        // Update game
+        function update() {
+            if (gameState !== GAME_STATE.PLAYING) return;
+
+            frameCount++;
+            score += 0.016;
+            runAnimation++;
+
+            if (damageFlash > 0) damageFlash--;
+            if (achievementTimer > 0) achievementTimer--;
+
+            if (frameCount % 180 === 0) {
+                gameSpeed += 0.3;
+            }
+
+            // Update metrics during gameplay only
+            calculateMetrics();
+            checkAchievements();
+
+            updateBackground();
+
+            player.velocityY += gravity;
+            player.y += player.velocityY;
+
+            if (player.y >= groundY - player.height) {
+                player.y = groundY - player.height;
+                player.velocityY = 0;
+                player.jumping = false;
+                player.onPlatform = false;
+                player.doubleJumpAvailable = true;
+            }
+
+            let overAbyss = false;
+            let onPlatform = false;
+
+            for (let i = 0; i < obstacles.length; i++) {
+                if (obstacles[i].type === OBSTACLE_TYPES.ABYSS) {
+                    const abyss = obstacles[i];
+                    if (player.x + player.width > abyss.x &&
+                        player.x < abyss.x + abyss.width) {
+                        overAbyss = true;
+                        break;
+                    }
+                }
+            }
+
+            for (let i = platforms.length - 1; i >= 0; i--) {
+                const platform = platforms[i];
+
+                if (player.velocityY >= 0 &&
+                    player.x + player.width > platform.x &&
+                    player.x < platform.x + platform.width &&
+                    player.y + player.height >= platform.y &&
+                    player.y + player.height <= platform.y + platform.height + 5) {
+
+                    player.y = platform.y - player.height;
+                    player.velocityY = 0;
+                    player.jumping = false;
+                    player.onPlatform = true;
+                    player.doubleJumpAvailable = true;
+                    onPlatform = true;
+                }
+            }
+
+            if (overAbyss && !onPlatform && player.y + player.height >= groundY) {
+                takeDamage();
+                player.y = groundY - player.height - 50;
+                player.velocityY = 0;
+            }
+
+            if (frameCount % Math.max(60, 100 - Math.floor(score / 2)) === 0) {
+                createObstacle();
+            }
+
+            if (frameCount % 600 === 0 && Math.random() > 0.3) {
+                createCollectible();
+            }
+
+            for (let i = obstacles.length - 1; i >= 0; i--) {
+                // Move obstacle left (scrolling)
+                obstacles[i].x -= gameSpeed;
+
+                // Move hedgehogs horizontally (up and down movement)
+                if (obstacles[i].type === OBSTACLE_TYPES.HEDGEHOG) {
+                    // Update horizontal offset
+                    obstacles[i].offsetX += obstacles[i].moveDirection * obstacles[i].moveSpeed;
+
+                    // Reverse direction when reaching movement range
+                    if (Math.abs(obstacles[i].offsetX) > obstacles[i].moveRange) {
+                        obstacles[i].moveDirection *= -1;
+                    }
+
+                    // Add horizontal movement on top of scrolling
+                    obstacles[i].x += obstacles[i].moveDirection * obstacles[i].moveSpeed;
+                }
+
+                if (obstacles[i].x + obstacles[i].width < 0) {
+                    obstacles.splice(i, 1);
+                    continue;
+                }
+
+                if (obstacles[i].type === OBSTACLE_TYPES.HEDGEHOG) {
+                    if (checkCollision(player, obstacles[i])) {
+                        takeDamage();
+                        obstacles.splice(i, 1);
+                    }
+                }
+            }
+
+            for (let i = platforms.length - 1; i >= 0; i--) {
+                platforms[i].x -= gameSpeed;
+
+                if (platforms[i].x + platforms[i].width < 0) {
+                    platforms.splice(i, 1);
+                }
+            }
+
+            for (let i = collectibles.length - 1; i >= 0; i--) {
+                collectibles[i].x -= gameSpeed;
+
+                if (collectibles[i].x + collectibles[i].width < 0) {
+                    collectibles.splice(i, 1);
+                    continue;
+                }
+
+                if (!collectibles[i].collected && checkCollision(player, collectibles[i])) {
+                    lives++;
+                    sessionBeersCollected++;
+                    totalBeersCollected++;
+                    checkAchievements();
+                    collectibles[i].collected = true;
+                    collectibles.splice(i, 1);
+                }
+            }
+        }
+
+        // Draw game
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            if (gameState === GAME_STATE.START) {
+                drawStartScreen();
+            } else if (gameState === GAME_STATE.PLAYING) {
+                drawBackground();
+                drawGround();
+
+                obstacles.forEach(obs => {
+                    if (obs.type === OBSTACLE_TYPES.HEDGEHOG) {
+                        drawHedgehog(obs.x, obs.y);
+                    } else {
+                        drawAbyss(obs);
+                    }
+                });
+
+                platforms.forEach(platform => {
+                    drawPlatform(platform);
+                });
+
+                collectibles.forEach(col => {
+                    if (!col.collected) {
+                        drawBeer(col.x, col.y);
+                    }
+                });
+
+                drawPlayer();
+                drawUI();
+            } else if (gameState === GAME_STATE.GAME_OVER) {
+                drawBackground();
+                drawGround();
+                obstacles.forEach(obs => {
+                    if (obs.type === OBSTACLE_TYPES.HEDGEHOG) {
+                        drawHedgehog(obs.x, obs.y);
+                    } else {
+                        drawAbyss(obs);
+                    }
+                });
+                platforms.forEach(platform => {
+                    drawPlatform(platform);
+                });
+                collectibles.forEach(col => {
+                    if (!col.collected) {
+                        drawBeer(col.x, col.y);
+                    }
+                });
+                drawPlayer();
+                drawUI();
+                drawGameOverScreen();
+            }
+        }
+
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Handle jump
+        function jump() {
+            if (!player.jumping && !player.onPlatform) {
+                player.velocityY = player.jumpPower;
+                player.jumping = true;
+            } else if ((player.jumping || player.onPlatform) && player.doubleJumpAvailable) {
+                player.velocityY = player.jumpPower;
+                player.doubleJumpAvailable = false;
+                player.onPlatform = false;
+            }
+        }
+
+        // Reset game
+        function resetGame() {
+            gameSpeed = 6;
+            score = 0;
+            lives = 1;
+            frameCount = 0;
+            damageFlash = 0;
+            runAnimation = 0;
+            distanceMeters = 0;
+            sessionBeersCollected = 0;
+            lastPace = '0:00';
+            paceUpdateCounter = 0;
+            finalMetrics = null;
+            obstacles = [];
+            platforms = [];
+            collectibles = [];
+            player.y = groundY - player.height;
+            player.velocityY = 0;
+            player.jumping = false;
+            player.onPlatform = false;
+            player.doubleJumpAvailable = true;
+            player.gender = Math.random() > 0.5 ? 'male' : 'female';
+            initBackground();
+        }
+
+        // Keyboard controls
+        document.addEventListener('keydown', (e) => {
+            if (e.code === 'Space') {
+                e.preventDefault();
+
+                if (gameState === GAME_STATE.START) {
+                    gameState = GAME_STATE.PLAYING;
+                    resetGame();
+                } else if (gameState === GAME_STATE.PLAYING) {
+                    if (damageFlash === 0) {
+                        jump();
+                    }
+                } else if (gameState === GAME_STATE.GAME_OVER) {
+                    gameState = GAME_STATE.PLAYING;
+                    resetGame();
+                }
+            }
+        });
+
+        // Touch/Mobile controls
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+
+            if (gameState === GAME_STATE.START) {
+                gameState = GAME_STATE.PLAYING;
+                resetGame();
+            } else if (gameState === GAME_STATE.PLAYING) {
+                if (damageFlash === 0) {
+                    jump();
+                }
+            } else if (gameState === GAME_STATE.GAME_OVER) {
+                gameState = GAME_STATE.PLAYING;
+                resetGame();
+            }
+        });
+
+        // Click controls (for desktop)
+        canvas.addEventListener('click', (e) => {
+            if (gameState === GAME_STATE.START) {
+                gameState = GAME_STATE.PLAYING;
+                resetGame();
+            } else if (gameState === GAME_STATE.PLAYING) {
+                if (damageFlash === 0) {
+                    jump();
+                }
+            } else if (gameState === GAME_STATE.GAME_OVER) {
+                gameState = GAME_STATE.PLAYING;
+                resetGame();
+            }
+        });
+
+        // Initialize and start game
+        initBackground();
+        gameLoop();
+    </script>
+</body>
+</html>
