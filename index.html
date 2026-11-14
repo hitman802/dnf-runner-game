@@ -90,7 +90,7 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
         // Disable image smoothing for crisp pixels on mobile
         ctx.imageSmoothingEnabled = false;
 
-        // Handle canvas scaling for mobile
+        // Handle canvsas scaling for mobile
         function resizeCanvas() {
             // Keep internal resolution at 800x400
             const baseWidth = 800;
@@ -134,9 +134,18 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
         // Game states
         const GAME_STATE = {
             START: 'start',
+            INTRO: 'intro',
             PLAYING: 'playing',
             GAME_OVER: 'gameover'
         };
+
+        let introTimer = 0;
+        const INTRO_DURATION = 120; // 2 seconds at 60fps
+
+        const logoImage = new Image();
+        let logoLoaded = false;
+        logoImage.onload = () => { logoLoaded = true; };
+        logoImage.src = 'img/logo_3.png';
 
         // Game variables
         let gameState = GAME_STATE.START;
@@ -189,7 +198,7 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
             jumping: false,
             onPlatform: false,
             doubleJumpAvailable: true,
-            jumpPower: -15,
+            jumpPower: -12,
             gender: Math.random() > 0.5 ? 'male' : 'female'
         };
 
@@ -487,144 +496,285 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
 
         // Draw player
         function drawPlayer() {
-            const animOffset = player.jumping ? 0 : Math.sin(runAnimation * 0.3) * 3;
+            const cx = player.x + 15;
+            const y  = player.y;                         // static anchor (no bob)
+            const t = runAnimation * 0.3;
+            const phase = player.jumping ? 0 : Math.sin(t);  // drives leg crossover only
 
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+            const skin = '#d9b89c';
+            const skinShade = '#a88060';
+            const skinHL = '#eccdb2';
+            const shirt = '#f5f5f5';
+            const shirtShade = '#c0c0c0';
+            const shorts = '#1a1a1a';
+            const shortsLine = '#3a3a3a';
+            const shoe = '#1a1a1a';
+            const shoeSole = '#fff';
+            const red = '#d32020';
+
+            // Ground shadow
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
             ctx.beginPath();
-            ctx.ellipse(player.x + 15, groundY - 2, 12, 4, 0, 0, Math.PI * 2);
+            ctx.ellipse(cx, groundY - 1, 12, 3, 0, 0, Math.PI * 2);
             ctx.fill();
 
-            ctx.fillStyle = '#4a4a4a';
-            ctx.fillRect(player.x + 8, player.y + 15, 14, 10);
-            ctx.fillStyle = '#3a3a3a';
-            ctx.fillRect(player.x + 8, player.y + 15, 14, 2);
+            // Draw order: back arm → back leg → body → front leg → front arm
+            drawBackArm();
+            drawBackLeg();
+            drawBody();
+            drawFrontLeg();
+            drawFrontArm();
 
-            ctx.fillStyle = '#000';
-            ctx.fillRect(player.x + 10, player.y + 5, 10, 11);
+            // ============ STATIC UPPER BODY ============
+            // Layout (y offsets from player.y, total ~40 tall):
+            //   HEAD      y 0..5   (6 tall, 7 wide) — ~1/7 of total height
+            //   NECK      y 6..7   (2 tall, 3 wide)
+            //   SHOULDERS y 8..9   (2 tall, 12 wide — wider than head)
+            //   TORSO     y 10..23 (14 tall, 10 wide)
+            //   SHORTS    y 24..28 (5 tall, 10 wide)
+            //   HIPS      y 29     (leg animation anchors here)
+            function drawBody() {
+                // All widths ODD and centered on cx → perfect mirror symmetry.
 
-            ctx.fillStyle = '#fff';
-            ctx.fillRect(player.x + 13, player.y + 8, 1, 3);
-            ctx.fillRect(player.x + 16, player.y + 8, 1, 3);
+                // HEAD (bald, 7 wide × 6 tall)
+                ctx.fillStyle = skin;
+                ctx.fillRect(cx - 2, y,     5, 1);     // skull cap (5w)
+                ctx.fillRect(cx - 3, y + 1, 7, 4);     // main skull (7w)
+                ctx.fillRect(cx - 2, y + 5, 5, 1);     // chin (5w)
+                // Scalp highlight (single centered pixel)
+                ctx.fillStyle = skinHL;
+                ctx.fillRect(cx, y + 1, 1, 1);
+                // Ears (symmetric pair)
+                ctx.fillStyle = skinShade;
+                ctx.fillRect(cx - 4, y + 2, 1, 2);
+                ctx.fillRect(cx + 4, y + 2, 1, 2);
+                // Eyes (symmetric)
+                ctx.fillStyle = '#000';
+                ctx.fillRect(cx - 2, y + 3, 1, 1);
+                ctx.fillRect(cx + 2, y + 3, 1, 1);
+                // Mouth (3w centered)
+                ctx.fillStyle = '#5a3020';
+                ctx.fillRect(cx - 1, y + 4, 3, 1);
 
-            ctx.fillStyle = '#e8d4c4';
-            ctx.fillRect(player.x + 12, player.y + 2, 6, 3);
+                // NECK (3 wide × 2 tall, centered)
+                ctx.fillStyle = skin;
+                ctx.fillRect(cx - 1, y + 6, 3, 2);
 
-            ctx.fillStyle = '#e8d4c4';
-            ctx.fillRect(player.x + 9, player.y - 2, 12, 10);
+                // SHOULDERS (11 wide × 2 tall)
+                ctx.fillStyle = shirt;
+                ctx.fillRect(cx - 5, y + 8, 11, 2);
+                // V-neckline hint (3w centered)
+                ctx.fillStyle = skinShade;
+                ctx.fillRect(cx - 1, y + 8, 3, 1);
 
-            ctx.fillStyle = '#2a2a2a';
-            ctx.fillRect(player.x + 11, player.y + 1, 2, 1);
-            ctx.fillRect(player.x + 17, player.y + 1, 2, 1);
+                // TORSO (9 wide × 14 tall)
+                ctx.fillStyle = shirt;
+                ctx.fillRect(cx - 4, y + 10, 9, 14);
+                // Bottom hem (symmetric line across full torso width)
+                ctx.fillStyle = shirtShade;
+                ctx.fillRect(cx - 4, y + 23, 9, 1);
 
-            if (player.gender === 'female') {
-                ctx.fillStyle = '#3a3a3a';
-                ctx.fillRect(player.x + 20, player.y, 3, 8);
-                ctx.fillRect(player.x + 21, player.y + 8, 2, 4);
+                // Red cross — clean X, just the two mirrored diagonals (no stray dots)
+                ctx.fillStyle = red;
+                // TL → BR: (cx-4, y+11), (cx-2, y+13), (cx, y+15), (cx+2, y+17)
+                // TR → BL: mirror → (cx+3, y+11), (cx+1, y+13), (cx-1, y+15), (cx-3, y+17)
+                for (let i = 0; i < 4; i++) {
+                    ctx.fillRect(cx - 4 + i * 2, y + 11 + i * 2, 2, 2);
+                    ctx.fillRect(cx + 3 - i * 2, y + 11 + i * 2, 2, 2);
+                }
+
+                // SHORTS (9 wide × 5 tall)
+                ctx.fillStyle = shorts;
+                ctx.fillRect(cx - 4, y + 24, 9, 5);
+                // Waistband (full width)
+                ctx.fillStyle = shortsLine;
+                ctx.fillRect(cx - 4, y + 24, 9, 1);
+                // Leg split (1w centered)
+                ctx.fillRect(cx, y + 27, 1, 2);
             }
 
-            ctx.fillStyle = '#2a2a2a';
-            ctx.fillRect(player.x + 7, player.y - 6, 16, 4);
-            ctx.fillRect(player.x + 10, player.y - 9, 10, 3);
-            ctx.fillStyle = '#1a1a1a';
-            ctx.fillRect(player.x + 7, player.y - 3, 16, 1);
+            // ============ STATIC RAISED ARMS (long V pose above head) ============
+            // Each arm has 3 upper-arm segments stepping outward + up, then a long
+            // forearm continuing up-and-out, finishing with a hand well above the head.
+            // Shoulder anchors are mirror positions about cx (back=cx-5, front=cx+4),
+            // so the two arms are pixel-perfect mirrors of each other.
+            function drawArm(shoulderX, outwardDir) {
+                ctx.fillStyle = skin;
+                // Upper arm — 3 angled 2×2 segments stepping out+up (shoulder → elbow)
+                ctx.fillRect(shoulderX,                  y + 8, 2, 2); // y+8..9
+                ctx.fillRect(shoulderX + outwardDir,     y + 6, 2, 3); // y+6..8
+                ctx.fillRect(shoulderX + outwardDir * 2, y + 3, 2, 4); // y+3..6 (elbow)
+                // Elbow shade at the bend
+                ctx.fillStyle = skinShade;
+                ctx.fillRect(shoulderX + outwardDir * 2, y + 3, 2, 1);
+                // Long forearm — steps one more unit outward, extends well above head
+                ctx.fillStyle = skin;
+                ctx.fillRect(shoulderX + outwardDir * 3, y - 2, 2, 6); // y-2..3
 
-            ctx.fillStyle = '#e8d4c4';
-            if (player.jumping) {
-                ctx.fillRect(player.x + 4, player.y + 8, 4, 9);
-                ctx.fillRect(player.x + 22, player.y + 8, 4, 9);
-                ctx.fillRect(player.x + 4, player.y + 16, 4, 3);
-                ctx.fillRect(player.x + 22, player.y + 16, 4, 3);
-            } else {
-                ctx.fillRect(player.x + 6, player.y + 8 + animOffset, 4, 9);
-                ctx.fillRect(player.x + 20, player.y + 8 - animOffset, 4, 9);
-                ctx.fillRect(player.x + 6, player.y + 16 + animOffset, 4, 3);
-                ctx.fillRect(player.x + 20, player.y + 16 - animOffset, 4, 3);
+                // HAND — "rock goat" / sign of the horns, enlarged so it reads clearly.
+                // Palm (5w × 2h) wider than forearm; two 1w × 4h fingers rise 4px with a
+                // 3-pixel gap between them (index + pinky up, middle/ring folded).
+                // Hand is centered on the forearm so it mirrors cleanly left↔right.
+                const handX = shoulderX + outwardDir * 3 - (outwardDir < 0 ? 2 : 1);
+                // Palm / fist
+                ctx.fillStyle = skin;
+                ctx.fillRect(handX, y - 4, 5, 2);         // palm (y-4..-3)
+                // Knuckle shading (top row of palm)
+                ctx.fillStyle = skinShade;
+                ctx.fillRect(handX, y - 4, 5, 1);
+                // Index finger — outer-left column, 3px tall
+                ctx.fillStyle = skin;
+                ctx.fillRect(handX,     y - 7, 1, 3);     // y-7..-5
+                // Pinky finger — outer-right column, 3px tall
+                ctx.fillRect(handX + 4, y - 7, 1, 3);
+                // Fingertip highlight
+                ctx.fillStyle = skinHL;
+                ctx.fillRect(handX,     y - 7, 1, 1);
+                ctx.fillRect(handX + 4, y - 7, 1, 1);
             }
 
-            ctx.fillStyle = '#e8d4c4';
-            if (player.jumping) {
-                ctx.fillRect(player.x + 10, player.y + 25, 4, 9);
-                ctx.fillRect(player.x + 16, player.y + 25, 4, 9);
-            } else {
-                ctx.fillRect(player.x + 10, player.y + 25 - animOffset, 4, 10 + animOffset);
-                ctx.fillRect(player.x + 16, player.y + 25 + animOffset, 4, 10 - animOffset);
+            // Mirror pair about cx: left=cx-5, right=cx+4 → hands at cx-8..cx-7 and cx+7..cx+8
+            function drawBackArm()  { drawArm(cx - 5, -1); }
+            function drawFrontArm() { drawArm(cx + 4,  1); }
+
+            // ============ LEG ANIMATION (unchanged from previous version) ============
+            // Crab-walk / X-stride: feet cross past the body center line. Driven by `phase`.
+            // Anchored at player.y (not a bobbing offset) so the hip sits at a fixed row.
+            function drawLeg(hipCenterX, crossDir) {
+                const hipY = y + 29;
+                if (player.jumping) {
+                    ctx.fillStyle = skin;
+                    ctx.fillRect(hipCenterX - 2, hipY, 4, 5);
+                    ctx.fillRect(hipCenterX - 2, hipY + 5, 4, 4);
+                    ctx.fillStyle = skinShade;
+                    ctx.fillRect(hipCenterX - 2, hipY + 5, 4, 1);
+                    ctx.fillStyle = shoe;
+                    ctx.fillRect(hipCenterX - 3, hipY + 8, 6, 2);
+                    ctx.fillStyle = shoeSole;
+                    ctx.fillRect(hipCenterX - 3, hipY + 10, 6, 1);
+                    return;
+                }
+
+                const footShift = Math.round(crossDir * 5);
+                const lift      = Math.round(Math.abs(crossDir) * 3);
+
+                // Thigh
+                ctx.fillStyle = skin;
+                ctx.fillRect(hipCenterX - 2 + Math.round(footShift * 0.3), hipY, 4, 4);
+
+                // Calf
+                ctx.fillRect(hipCenterX - 2 + Math.round(footShift * 0.7), hipY + 4, 4, 4 - Math.round(lift * 0.5));
+
+                // Knee shade
+                ctx.fillStyle = skinShade;
+                ctx.fillRect(hipCenterX - 2 + Math.round(footShift * 0.7), hipY + 4, 4, 1);
+
+                // Shoe
+                const shoeY = hipY + 9 - lift;
+                ctx.fillStyle = shoe;
+                ctx.fillRect(hipCenterX - 3 + footShift, shoeY, 6, 2);
+                ctx.fillStyle = shoeSole;
+                ctx.fillRect(hipCenterX - 3 + footShift, shoeY + 2, 6, 1);
             }
 
-            ctx.fillStyle = '#2a2a2a';
-            if (!player.jumping) {
-                ctx.fillRect(player.x + 8, player.y + 35 - animOffset, 7, 5);
-                ctx.fillStyle = '#4a4a4a';
-                ctx.fillRect(player.x + 8, player.y + 35 - animOffset, 7, 2);
-                ctx.fillStyle = '#fff';
-                ctx.fillRect(player.x + 13, player.y + 36 - animOffset, 2, 1);
-
-                ctx.fillStyle = '#2a2a2a';
-                ctx.fillRect(player.x + 16, player.y + 35 + animOffset, 7, 5);
-                ctx.fillStyle = '#4a4a4a';
-                ctx.fillRect(player.x + 16, player.y + 35 + animOffset, 7, 2);
-                ctx.fillStyle = '#fff';
-                ctx.fillRect(player.x + 21, player.y + 36 + animOffset, 2, 1);
-            } else {
-                ctx.fillRect(player.x + 8, player.y + 33, 7, 5);
-                ctx.fillRect(player.x + 16, player.y + 33, 7, 5);
-                ctx.fillStyle = '#4a4a4a';
-                ctx.fillRect(player.x + 8, player.y + 33, 7, 2);
-                ctx.fillRect(player.x + 16, player.y + 33, 7, 2);
-            }
+            // Hips mirror about cx: back thigh covers cx-4..cx-1, front thigh covers cx+1..cx+4
+            // (drawLeg puts the 4-wide thigh at hipCenterX-2, so hipCenterX+3 mirrors hipCenterX-2).
+            function drawBackLeg()  { drawLeg(cx - 2,  phase); }
+            function drawFrontLeg() { drawLeg(cx + 3, -phase); }
         }
 
-        // Draw hedgehog with animation
+        // Draw hedgehog — rounded body dome, curved back with varied triangular spikes,
+        // small head + snout on the right. Hitbox preserved at 31×27 (passed-in x,y).
         function drawHedgehog(x, y) {
-            // Animation offset for movement
-            const walkAnim = Math.sin(frameCount * 0.2) * 1.5;
-            const spikeAnim = Math.sin(frameCount * 0.15) * 0.5;
+            const bob = Math.sin(frameCount * 0.15) * 0.5;
+            const by = y + bob;
 
-            // Shadow
+            const BODY = '#2a2a2a';
+            const BODY_DARK = '#1a1a1a';
+            const FACE = '#4a4a4a';
+            const SPIKE_TIP = '#3a3a3a';
+
+            // Ground shadow
             ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
             ctx.beginPath();
-            ctx.ellipse(x + 16, groundY - 1, 10, 3, 0, 0, Math.PI * 2);
+            ctx.ellipse(x + 15, groundY - 1, 12, 3, 0, 0, Math.PI * 2);
             ctx.fill();
 
-            ctx.fillStyle = '#2a2a2a';
-            // Body (slightly bobs up and down)
-            ctx.fillRect(x, y + 12 + walkAnim * 0.5, 28, 13);
-            ctx.fillRect(x + 2, y + 10 + walkAnim * 0.5, 24, 2);
-
-            // Spikes with variety and animation
-            for (let i = 0; i < 6; i++) {
-                const spikeHeight = 8 + (i % 2) * 2 + spikeAnim;
-                ctx.fillRect(x + i * 4.5 + 1, y + 12 - spikeHeight + walkAnim * 0.5, 3, spikeHeight);
+            // === SPIKES (drawn first so the dome tucks over the bases) ===
+            // Each spike: 2-wide base tapering to a 1-pixel tip, with varied
+            // heights and slight leans so the silhouette looks organic.
+            // Base rows follow the dome contour (lower at edges, higher at center).
+            const spikes = [
+                { sx: 6,  baseY: 13, h: 4, lean: -1 }, // left edge, short, leans back
+                { sx: 9,  baseY: 11, h: 5, lean: -1 },
+                { sx: 12, baseY: 10, h: 6, lean:  0 }, // center-left, tallest
+                { sx: 15, baseY: 10, h: 6, lean:  0 }, // center-right, tallest
+                { sx: 18, baseY: 11, h: 5, lean:  1 },
+                { sx: 21, baseY: 13, h: 4, lean:  1 }, // right edge, short, leans fwd
+            ];
+            for (const s of spikes) {
+                const sx = x + s.sx;
+                const sbase = by + s.baseY;
+                ctx.fillStyle = BODY;
+                // Base row (2 wide)
+                ctx.fillRect(sx - 1, sbase, 2, 1);
+                // Middle rows (1 wide, leaning subtly)
+                for (let i = 1; i < s.h - 1; i++) {
+                    const off = Math.round(s.lean * i * 0.4);
+                    ctx.fillRect(sx + off, sbase - i, 1, 1);
+                }
+                // Lighter tip pixel
+                ctx.fillStyle = SPIKE_TIP;
+                const tipOff = Math.round(s.lean * (s.h - 1) * 0.4);
+                ctx.fillRect(sx + tipOff, sbase - (s.h - 1), 1, 1);
             }
 
-            // Spike tips (lighter)
-            ctx.fillStyle = '#3a3a3a';
-            for (let i = 0; i < 6; i++) {
-                const spikeHeight = 8 + (i % 2) * 2 + spikeAnim;
-                ctx.fillRect(x + i * 4.5 + 1, y + 12 - spikeHeight + walkAnim * 0.5, 3, 2);
-            }
+            // === BODY DOME (curved top, flat belly) ===
+            ctx.fillStyle = BODY;
+            // Rounded top (narrow → wide as we descend)
+            ctx.fillRect(x + 7,  by + 10, 12, 1);
+            ctx.fillRect(x + 5,  by + 11, 16, 1);
+            ctx.fillRect(x + 4,  by + 12, 18, 1);
+            ctx.fillRect(x + 3,  by + 13, 20, 1);
+            // Main body mass
+            ctx.fillRect(x + 2,  by + 14, 22, 8); // rows 14..21
+            // Belly curve (narrowing toward ground)
+            ctx.fillRect(x + 3,  by + 22, 20, 1);
+            ctx.fillRect(x + 5,  by + 23, 16, 1);
+            // Subtle belly shading line
+            ctx.fillStyle = BODY_DARK;
+            ctx.fillRect(x + 6,  by + 23, 14, 1);
 
-            // Face
-            ctx.fillStyle = '#3a3a3a';
-            ctx.fillRect(x + 22, y + 15 + walkAnim * 0.5, 9, 10);
+            // === HEAD (lighter gray, extends to the right) ===
+            ctx.fillStyle = FACE;
+            ctx.fillRect(x + 23, by + 14, 6, 1); // top
+            ctx.fillRect(x + 22, by + 15, 8, 5); // 8w × 5h main
+            ctx.fillRect(x + 23, by + 20, 6, 1); // bottom
+            // Snout extending right
+            ctx.fillRect(x + 29, by + 16, 2, 3);
 
-            // Ear
-            ctx.fillStyle = '#2a2a2a';
-            ctx.fillRect(x + 24, y + 14 + walkAnim * 0.5, 3, 3);
+            // Small pointed ear (dark, sits on top-left of head)
+            ctx.fillStyle = BODY;
+            ctx.fillRect(x + 22, by + 13, 2, 2);
+            ctx.fillRect(x + 23, by + 12, 1, 1); // ear tip
 
             // Eye
             ctx.fillStyle = '#000';
-            ctx.fillRect(x + 25, y + 17 + walkAnim * 0.5, 2, 2);
+            ctx.fillRect(x + 25, by + 16, 2, 2);
             ctx.fillStyle = '#fff';
-            ctx.fillRect(x + 26, y + 17 + walkAnim * 0.5, 1, 1);
+            ctx.fillRect(x + 26, by + 16, 1, 1); // glint
 
-            // Nose
-            ctx.fillStyle = '#1a1a1a';
-            ctx.fillRect(x + 29, y + 19 + walkAnim * 0.5, 2, 2);
+            // Nose at the snout tip
+            ctx.fillStyle = '#000';
+            ctx.fillRect(x + 30, by + 17, 1, 1);
 
-            // Animated legs (walking motion)
-            ctx.fillStyle = '#2a2a2a';
-            ctx.fillRect(x + 4, y + 23 - walkAnim + walkAnim * 0.5, 3, 4 + walkAnim);
-            ctx.fillRect(x + 22, y + 23 + walkAnim + walkAnim * 0.5, 3, 4 - walkAnim);
+            // === LEGS (small, alternating step) ===
+            const lp = Math.sin(frameCount * 0.3);
+            const legA = lp > 0 ? 1 : 0;
+            const legB = 1 - legA;
+            ctx.fillStyle = BODY_DARK;
+            ctx.fillRect(x + 6,  by + 24 - legA, 2, 2 + legA); // back leg
+            ctx.fillRect(x + 19, by + 24 - legB, 2, 2 + legB); // front leg
         }
 
         // Draw abyss
@@ -890,33 +1040,65 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
 
         // Draw start screen
         function drawStartScreen() {
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.fillStyle = '#fff';
+            ctx.textAlign = 'center';
+
+            const logoMaxHeight = 130;
+            const logoMaxWidth = 260;
+            if (logoLoaded && logoImage.naturalWidth > 0) {
+                const scale = Math.min(
+                    logoMaxWidth / logoImage.naturalWidth,
+                    logoMaxHeight / logoImage.naturalHeight
+                );
+                const drawW = logoImage.naturalWidth * scale;
+                const drawH = logoImage.naturalHeight * scale;
+                ctx.drawImage(
+                    logoImage,
+                    (canvas.width - drawW) / 2,
+                    5,
+                    drawW,
+                    drawH
+                );
+            } else {
+                ctx.font = 'bold 72px Courier New';
+                ctx.fillText('DNF', canvas.width / 2, 80);
+                ctx.fillRect(canvas.width / 2 - 70, 88, 140, 4);
+                ctx.font = '24px Courier New';
+                ctx.fillText('RUNNING CLUB', canvas.width / 2, 118);
+            }
+
+            ctx.font = 'bold 36px Courier New';
+            ctx.fillText('BIHOVA HRA', canvas.width / 2, 165);
+
+            ctx.font = '16px Courier New';
+            ctx.fillText('Instruktsii:', canvas.width / 2, 200);
+            ctx.font = '13px Courier New';
+            ctx.fillText('SPACE/TAP - Strybok (podviinyi strybok dozvolenyi)', canvas.width / 2, 222);
+            ctx.fillText('Unykai yizhakiv ta prirvy', canvas.width / 2, 242);
+            ctx.fillText('Vykorystovui platformy dlia podolannia shyrokykh prohalyn', canvas.width / 2, 262);
+            ctx.fillText('Zbyrai pyvo dlia dodatkovykh zhyttiv', canvas.width / 2, 282);
+            ctx.fillText('Zlovy chervonyi khrestyk ta upovilny shvydkist na 10 sekund', canvas.width / 2, 302);
+            ctx.fillText('Shvydkist zrostaie z chasom', canvas.width / 2, 322);
+
+            ctx.font = 'bold 20px Courier New';
+            ctx.fillText('SPACE/TAP shchob pochaty', canvas.width / 2, 365);
+
+            ctx.textAlign = 'left';
+        }
+
+        // Draw intro screen
+        function drawIntroScreen() {
             ctx.fillStyle = '#f5f5f5';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
             ctx.fillStyle = '#000';
-            ctx.font = 'bold 72px Courier New';
-            ctx.textAlign = 'center';
-            ctx.fillText('DNF', canvas.width / 2, 80);
-            ctx.fillRect(canvas.width / 2 - 70, 88, 140, 4);
-
-            ctx.font = '24px Courier New';
-            ctx.fillText('RUNNING CLUB', canvas.width / 2, 118);
-
             ctx.font = 'bold 36px Courier New';
-            ctx.fillText('RUNNER GAME', canvas.width / 2, 165);
-
-            ctx.font = '16px Courier New';
-            ctx.fillText('Instructions:', canvas.width / 2, 200);
-            ctx.font = '13px Courier New';
-            ctx.fillText('SPACE/TAP - Jump (double jump allowed)', canvas.width / 2, 222);
-            ctx.fillText('Avoid hedgehogs and abyss', canvas.width / 2, 242);
-            ctx.fillText('Use platforms over wide gaps', canvas.width / 2, 262);
-            ctx.fillText('Collect beer for extra lives', canvas.width / 2, 282);
-            ctx.fillText('Speed increases over time', canvas.width / 2, 302);
-
-            ctx.font = 'bold 20px Courier New';
-            ctx.fillText('SPACE/TAP to Start', canvas.width / 2, 350);
-
+            ctx.textAlign = 'center';
+            ctx.fillText('run to die,', canvas.width / 2, canvas.height / 2 - 10);
+            ctx.fillText('drink to be alive!', canvas.width / 2, canvas.height / 2 + 35);
             ctx.textAlign = 'left';
         }
 
@@ -929,12 +1111,12 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
             ctx.fillStyle = '#fff';
-            ctx.font = 'bold 48px Courier New';
+            ctx.font = 'bold 36px Courier New';
             ctx.textAlign = 'center';
-            ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2 - 120);
+            ctx.fillText('FINISH IS NOT IMPORTANT', canvas.width / 2, canvas.height / 2 - 120);
 
             ctx.font = 'bold 24px Courier New';
-            ctx.fillText('DNF RUNNING CLUB', canvas.width / 2, canvas.height / 2 - 80);
+            ctx.fillText('enjoy the moment', canvas.width / 2, canvas.height / 2 - 80);
 
             // Main stat - Distance (larger)
             ctx.font = 'bold 32px Courier New';
@@ -1077,6 +1259,14 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
 
         // Update game
         function update() {
+            if (gameState === GAME_STATE.INTRO) {
+                introTimer++;
+                if (introTimer >= INTRO_DURATION) {
+                    gameState = GAME_STATE.PLAYING;
+                }
+                return;
+            }
+
             if (gameState !== GAME_STATE.PLAYING) return;
 
             frameCount++;
@@ -1217,6 +1407,8 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
 
             if (gameState === GAME_STATE.START) {
                 drawStartScreen();
+            } else if (gameState === GAME_STATE.INTRO) {
+                drawIntroScreen();
             } else if (gameState === GAME_STATE.PLAYING) {
                 drawBackground();
                 drawGround();
@@ -1315,15 +1507,17 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
                 e.preventDefault();
 
                 if (gameState === GAME_STATE.START) {
-                    gameState = GAME_STATE.PLAYING;
                     resetGame();
+                    introTimer = 0;
+                    gameState = GAME_STATE.INTRO;
                 } else if (gameState === GAME_STATE.PLAYING) {
                     if (damageFlash === 0) {
                         jump();
                     }
                 } else if (gameState === GAME_STATE.GAME_OVER) {
-                    gameState = GAME_STATE.PLAYING;
                     resetGame();
+                    introTimer = 0;
+                    gameState = GAME_STATE.INTRO;
                 }
             }
         });
@@ -1334,15 +1528,17 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
             e.stopPropagation();
 
             if (gameState === GAME_STATE.START) {
-                gameState = GAME_STATE.PLAYING;
                 resetGame();
+                introTimer = 0;
+                gameState = GAME_STATE.INTRO;
             } else if (gameState === GAME_STATE.PLAYING) {
                 if (damageFlash === 0) {
                     jump();
                 }
             } else if (gameState === GAME_STATE.GAME_OVER) {
-                gameState = GAME_STATE.PLAYING;
                 resetGame();
+                introTimer = 0;
+                gameState = GAME_STATE.INTRO;
             }
         }, { passive: false });
 
@@ -1351,15 +1547,17 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
             e.preventDefault();
 
             if (gameState === GAME_STATE.START) {
-                gameState = GAME_STATE.PLAYING;
                 resetGame();
+                introTimer = 0;
+                gameState = GAME_STATE.INTRO;
             } else if (gameState === GAME_STATE.PLAYING) {
                 if (damageFlash === 0) {
                     jump();
                 }
             } else if (gameState === GAME_STATE.GAME_OVER) {
-                gameState = GAME_STATE.PLAYING;
                 resetGame();
+                introTimer = 0;
+                gameState = GAME_STATE.INTRO;
             }
         });
 
