@@ -149,8 +149,19 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
 
         // Game variables
         let gameState = GAME_STATE.START;
-        let gameSpeed = 6;
+        let gameSpeed = 6;          // Effective scroll speed used by all movement / parallax / metrics
+        let baseGameSpeed = 6;      // Natural progression speed (increases over time, unaffected by slowdown)
         let gravity = 0.8;
+
+        // Slowdown effect from red cross pickups
+        let slowFramesLeft = 0;           // 0 = no effect. First portion is full slow, final SLOW_RECOVERY frames are the ramp back.
+        const SLOW_DURATION   = 180;      // 3 seconds at 60fps — full-slow segment added on pickup
+        const SLOW_RECOVERY   = 60;       // 1 second ramp back to normal speed
+        const SLOW_FACTOR     = 0.5;      // During full slow, scroll speed = base * 0.5
+        const SLOW_MAX_FRAMES = 600;      // Hard cap: ~10s total effect no matter how many are stacked
+
+        // Red cross spawn thresholds (km/h). First cross at 10 km/h, then every +1 km/h.
+        let nextCrossSpeedKmH = 10;
         let score = 0;
         let highScore = 0;
         let lives = 1;
@@ -246,8 +257,8 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
             for (let i = 0; i < 12; i++) {
                 trees.push({
                     x: i * 120 + Math.random() * 60,
-                    height: 35 + Math.random() * 25,
-                    type: Math.random() > 0.5 ? 'pine' : 'oak'
+                    height: 30 + Math.random() * 35,  // wider height range for more variety
+                    type: pickTreeType()
                 });
             }
 
@@ -264,9 +275,28 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
                 clouds.push({
                     x: i * 200 + Math.random() * 100,
                     y: 20 + Math.random() * 70,
-                    size: 25 + Math.random() * 20
+                    size: 20 + Math.random() * 30,  // wider size range
+                    type: pickCloudType()
                 });
             }
+        }
+
+        // Tree type distribution — mix of silhouettes for a varied skyline.
+        function pickTreeType() {
+            const r = Math.random();
+            if (r < 0.30) return 'pine';
+            if (r < 0.55) return 'oak';
+            if (r < 0.75) return 'birch';
+            if (r < 0.90) return 'bush';
+            return 'dead';
+        }
+        // Cloud type distribution.
+        function pickCloudType() {
+            const r = Math.random();
+            if (r < 0.40) return 'normal';
+            if (r < 0.65) return 'big';
+            if (r < 0.85) return 'small';
+            return 'wispy';
         }
 
         // Calculate running metrics
@@ -372,47 +402,108 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
             ctx.fill();
         }
 
+        // Background tone palettes — one per km/h step above 10 km/h.
+        // Index 0 = 10 km/h baseline (day), index N = 10+N km/h.
+        // After the last entry the tone clamps (stays at deepest night).
+        const BG_TONES = [
+            // 10: neutral day
+            { sky:['#f0f0f0','#e8e8e8','#d8d8d8'], cloud:'#c8c8c8', cloudHL:'#d8d8d8', hillFar:'#b8b8b8', hillNear:'#989898', hillShade:'#888888' },
+            // 11: slightly warm
+            { sky:['#f0eae0','#e8ddd0','#d8cdbd'], cloud:'#c8bbb0', cloudHL:'#d8ccbf', hillFar:'#b8a898', hillNear:'#988878', hillShade:'#886858' },
+            // 12: afternoon warm
+            { sky:['#f5dec8','#e8ccb0','#d8ba98'], cloud:'#c8a890', cloudHL:'#d8bca0', hillFar:'#b89880', hillNear:'#987860', hillShade:'#785840' },
+            // 13: golden hour
+            { sky:['#f8c898','#e8b080','#d89868'], cloud:'#c89070', cloudHL:'#d8a080', hillFar:'#b07048', hillNear:'#985830', hillShade:'#784020' },
+            // 14: dusk orange/red
+            { sky:['#f0a090','#d88078','#c06858'], cloud:'#b06050', cloudHL:'#c87060', hillFar:'#905040', hillNear:'#703020', hillShade:'#501810' },
+            // 15: deep red/magenta
+            { sky:['#c88098','#a86078','#884858'], cloud:'#885070', cloudHL:'#a06880', hillFar:'#604050', hillNear:'#402030', hillShade:'#301020' },
+            // 16: purple twilight
+            { sky:['#806098','#604880','#403868'], cloud:'#604070', cloudHL:'#785088', hillFar:'#302848', hillNear:'#201838', hillShade:'#180828' },
+            // 17: deep dusk
+            { sky:['#405078','#304068','#203058'], cloud:'#405078', cloudHL:'#505888', hillFar:'#202848', hillNear:'#101838', hillShade:'#080828' },
+            // 18+: night
+            { sky:['#202848','#182040','#101838'], cloud:'#303858', cloudHL:'#404878', hillFar:'#101830', hillNear:'#080818', hillShade:'#040410' },
+        ];
+
+        function getBgTone() {
+            const kmh = 8 + (baseGameSpeed - 6) * 0.8;
+            const idx = Math.max(0, Math.min(BG_TONES.length - 1, Math.floor(kmh - 10)));
+            return BG_TONES[idx];
+        }
+
         // Draw background
         function drawBackground() {
+            const tone = getBgTone();
+
             const gradient = ctx.createLinearGradient(0, 0, 0, groundY);
-            gradient.addColorStop(0, '#f0f0f0');
-            gradient.addColorStop(0.6, '#e8e8e8');
-            gradient.addColorStop(1, '#d8d8d8');
+            gradient.addColorStop(0,   tone.sky[0]);
+            gradient.addColorStop(0.6, tone.sky[1]);
+            gradient.addColorStop(1,   tone.sky[2]);
             ctx.fillStyle = gradient;
             ctx.fillRect(0, 0, canvas.width, groundY);
 
             clouds.forEach(cloud => {
-                ctx.fillStyle = '#c8c8c8';
-                ctx.beginPath();
-                ctx.arc(cloud.x, cloud.y + cloud.size * 0.3, cloud.size * 0.4, 0, Math.PI * 2);
-                ctx.arc(cloud.x + cloud.size * 0.5, cloud.y, cloud.size * 0.5, 0, Math.PI * 2);
-                ctx.arc(cloud.x + cloud.size, cloud.y + cloud.size * 0.2, cloud.size * 0.45, 0, Math.PI * 2);
-                ctx.fill();
-
-                ctx.fillStyle = '#d8d8d8';
-                ctx.beginPath();
-                ctx.arc(cloud.x + cloud.size * 0.3, cloud.y + cloud.size * 0.1, cloud.size * 0.2, 0, Math.PI * 2);
-                ctx.fill();
+                ctx.fillStyle = tone.cloud;
+                const t = cloud.type || 'normal';
+                if (t === 'wispy') {
+                    // Elongated streaky cloud
+                    ctx.beginPath();
+                    ctx.arc(cloud.x,                 cloud.y, cloud.size * 0.25, 0, Math.PI * 2);
+                    ctx.arc(cloud.x + cloud.size*0.4, cloud.y, cloud.size * 0.3,  0, Math.PI * 2);
+                    ctx.arc(cloud.x + cloud.size*0.9, cloud.y + cloud.size * 0.1, cloud.size * 0.25, 0, Math.PI * 2);
+                    ctx.arc(cloud.x + cloud.size*1.3, cloud.y, cloud.size * 0.2,  0, Math.PI * 2);
+                    ctx.fill();
+                } else if (t === 'small') {
+                    // Tight 2-bump cloud
+                    ctx.beginPath();
+                    ctx.arc(cloud.x,                 cloud.y, cloud.size * 0.35, 0, Math.PI * 2);
+                    ctx.arc(cloud.x + cloud.size*0.5, cloud.y - cloud.size*0.1, cloud.size * 0.4, 0, Math.PI * 2);
+                    ctx.fill();
+                } else if (t === 'big') {
+                    // Chunky multi-lobe cloud
+                    ctx.beginPath();
+                    ctx.arc(cloud.x,                 cloud.y + cloud.size * 0.3, cloud.size * 0.45, 0, Math.PI * 2);
+                    ctx.arc(cloud.x + cloud.size*0.4, cloud.y,                 cloud.size * 0.55, 0, Math.PI * 2);
+                    ctx.arc(cloud.x + cloud.size*0.9, cloud.y + cloud.size*0.1, cloud.size * 0.5, 0, Math.PI * 2);
+                    ctx.arc(cloud.x + cloud.size*1.3, cloud.y + cloud.size*0.3, cloud.size * 0.4, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = tone.cloudHL;
+                    ctx.beginPath();
+                    ctx.arc(cloud.x + cloud.size*0.5, cloud.y - cloud.size*0.1, cloud.size * 0.2, 0, Math.PI * 2);
+                    ctx.fill();
+                } else {
+                    // Default puffy cloud (original)
+                    ctx.beginPath();
+                    ctx.arc(cloud.x,                 cloud.y + cloud.size * 0.3, cloud.size * 0.4, 0, Math.PI * 2);
+                    ctx.arc(cloud.x + cloud.size*0.5, cloud.y,                   cloud.size * 0.5, 0, Math.PI * 2);
+                    ctx.arc(cloud.x + cloud.size,    cloud.y + cloud.size * 0.2, cloud.size * 0.45, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = tone.cloudHL;
+                    ctx.beginPath();
+                    ctx.arc(cloud.x + cloud.size*0.3, cloud.y + cloud.size*0.1, cloud.size * 0.2, 0, Math.PI * 2);
+                    ctx.fill();
+                }
             });
 
             distantHills.forEach(hill => {
-                drawHill(hill.x, groundY, hill.points, '#b8b8b8');
+                drawHill(hill.x, groundY, hill.points, tone.hillFar);
             });
 
             hills.forEach(hill => {
-                drawHill(hill.x, groundY, hill.points, '#989898');
+                drawHill(hill.x, groundY, hill.points, tone.hillNear);
 
-                ctx.fillStyle = '#888888';
+                ctx.fillStyle = tone.hillShade;
                 ctx.globalAlpha = 0.3;
-                drawHill(hill.x + hill.points[0].x, groundY, hill.points.slice(4), '#888888');
+                drawHill(hill.x + hill.points[0].x, groundY, hill.points.slice(4), tone.hillShade);
                 ctx.globalAlpha = 1;
             });
 
             trees.forEach(tree => {
                 if (tree.type === 'pine') {
+                    // Original triangular pine
                     ctx.fillStyle = '#2a2a2a';
                     ctx.fillRect(tree.x + 3, groundY - tree.height, 4, tree.height);
-
                     ctx.fillStyle = '#4a4a4a';
                     for (let i = 0; i < 3; i++) {
                         const offset = i * (tree.height / 4);
@@ -423,29 +514,71 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
                         ctx.closePath();
                         ctx.fill();
                     }
-
                     ctx.fillStyle = '#5a5a5a';
                     ctx.beginPath();
                     ctx.moveTo(tree.x + 5, groundY - tree.height - 8);
-                    ctx.lineTo(tree.x, groundY - tree.height + 2);
+                    ctx.lineTo(tree.x,     groundY - tree.height + 2);
                     ctx.lineTo(tree.x + 5, groundY - tree.height + 2);
                     ctx.closePath();
                     ctx.fill();
-                } else {
+                } else if (tree.type === 'oak') {
+                    // Round-canopy oak
                     ctx.fillStyle = '#3a3a3a';
                     ctx.fillRect(tree.x, groundY - tree.height, 8, tree.height);
-
                     ctx.fillStyle = '#5a5a5a';
                     ctx.beginPath();
-                    ctx.arc(tree.x - 2, groundY - tree.height - 5, 8, 0, Math.PI * 2);
+                    ctx.arc(tree.x - 2, groundY - tree.height - 5,  8, 0, Math.PI * 2);
                     ctx.arc(tree.x + 4, groundY - tree.height - 10, 10, 0, Math.PI * 2);
                     ctx.arc(tree.x + 10, groundY - tree.height - 5, 8, 0, Math.PI * 2);
                     ctx.fill();
-
                     ctx.fillStyle = '#6a6a6a';
                     ctx.beginPath();
                     ctx.arc(tree.x + 2, groundY - tree.height - 8, 5, 0, Math.PI * 2);
                     ctx.fill();
+                } else if (tree.type === 'birch') {
+                    // Tall thin birch with light trunk + small canopy
+                    ctx.fillStyle = '#d8d8d8';
+                    ctx.fillRect(tree.x + 3, groundY - tree.height, 3, tree.height);
+                    // Trunk bark marks
+                    ctx.fillStyle = '#4a4a4a';
+                    for (let i = 0; i < 4; i++) {
+                        ctx.fillRect(tree.x + 3, groundY - tree.height + 8 + i * 12, 3, 1);
+                    }
+                    // Small canopy
+                    ctx.fillStyle = '#6a6a6a';
+                    ctx.beginPath();
+                    ctx.arc(tree.x + 4, groundY - tree.height - 4, 6, 0, Math.PI * 2);
+                    ctx.arc(tree.x + 8, groundY - tree.height - 2, 5, 0, Math.PI * 2);
+                    ctx.arc(tree.x,     groundY - tree.height - 2, 5, 0, Math.PI * 2);
+                    ctx.fill();
+                } else if (tree.type === 'bush') {
+                    // Short round bush (no trunk)
+                    const bh = Math.min(tree.height, 22);
+                    ctx.fillStyle = '#5a5a5a';
+                    ctx.beginPath();
+                    ctx.arc(tree.x,      groundY - bh / 2, bh * 0.55, 0, Math.PI * 2);
+                    ctx.arc(tree.x + 8,  groundY - bh / 2, bh * 0.60, 0, Math.PI * 2);
+                    ctx.arc(tree.x + 16, groundY - bh / 2, bh * 0.55, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#7a7a7a';
+                    ctx.beginPath();
+                    ctx.arc(tree.x + 6, groundY - bh * 0.75, bh * 0.25, 0, Math.PI * 2);
+                    ctx.fill();
+                } else if (tree.type === 'dead') {
+                    // Bare dead tree — stark silhouette
+                    ctx.fillStyle = '#3a3a3a';
+                    ctx.fillRect(tree.x + 4, groundY - tree.height, 3, tree.height);
+                    // Bare branches
+                    ctx.strokeStyle = '#3a3a3a';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(tree.x + 5, groundY - tree.height + 6);
+                    ctx.lineTo(tree.x - 3, groundY - tree.height - 6);
+                    ctx.moveTo(tree.x + 5, groundY - tree.height + 12);
+                    ctx.lineTo(tree.x + 14, groundY - tree.height + 2);
+                    ctx.moveTo(tree.x + 5, groundY - tree.height + 18);
+                    ctx.lineTo(tree.x - 4, groundY - tree.height + 10);
+                    ctx.stroke();
                 }
             });
         }
@@ -454,9 +587,11 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
         function updateBackground() {
             clouds.forEach(cloud => {
                 cloud.x -= gameSpeed * 0.15;
-                if (cloud.x + cloud.size * 1.5 < 0) {
+                if (cloud.x + cloud.size * 2 < 0) {
                     cloud.x = canvas.width + 50;
                     cloud.y = 20 + Math.random() * 70;
+                    cloud.size = 20 + Math.random() * 30;
+                    cloud.type = pickCloudType();
                 }
             });
 
@@ -480,8 +615,8 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
                 tree.x -= gameSpeed * 0.65;
                 if (tree.x < -20) {
                     tree.x = canvas.width + 20;
-                    tree.height = 35 + Math.random() * 25;
-                    tree.type = Math.random() > 0.5 ? 'pine' : 'oak';
+                    tree.height = 30 + Math.random() * 35;
+                    tree.type = pickTreeType();
                 }
             });
 
@@ -684,7 +819,7 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
         }
 
         // Draw hedgehog — rounded body dome, curved back with varied triangular spikes,
-        // small head + snout on the right. Hitbox preserved at 31×27 (passed-in x,y).
+        // small head + snout on the right. Hitbox: 31×22 (passed-in x, y is top-left).
         function drawHedgehog(x, y) {
             const bob = Math.sin(frameCount * 0.15) * 0.5;
             const by = y + bob;
@@ -701,29 +836,32 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
             ctx.fill();
 
             // === SPIKES (drawn first so the dome tucks over the bases) ===
-            // Each spike: 2-wide base tapering to a 1-pixel tip, with varied
-            // heights and slight leans so the silhouette looks organic.
-            // Base rows follow the dome contour (lower at edges, higher at center).
+            // 12 spikes spread EVENLY across the full back (every 2px from x+3 to x+25),
+            // with mostly uniform height so coverage reads as "quills over the whole back"
+            // instead of clustering in the middle.
             const spikes = [
-                { sx: 6,  baseY: 13, h: 4, lean: -1 }, // left edge, short, leans back
-                { sx: 9,  baseY: 11, h: 5, lean: -1 },
-                { sx: 12, baseY: 10, h: 6, lean:  0 }, // center-left, tallest
-                { sx: 15, baseY: 10, h: 6, lean:  0 }, // center-right, tallest
-                { sx: 18, baseY: 11, h: 5, lean:  1 },
-                { sx: 21, baseY: 13, h: 4, lean:  1 }, // right edge, short, leans fwd
+                { sx: 3,  baseY: 8, h: 4, lean: -1 },
+                { sx: 5,  baseY: 7, h: 5, lean: -1 },
+                { sx: 7,  baseY: 6, h: 5, lean: -1 },
+                { sx: 9,  baseY: 6, h: 5, lean:  0 },
+                { sx: 11, baseY: 5, h: 5, lean:  0 },
+                { sx: 13, baseY: 5, h: 6, lean:  0 },
+                { sx: 15, baseY: 5, h: 5, lean:  0 },
+                { sx: 17, baseY: 5, h: 5, lean:  0 },
+                { sx: 19, baseY: 6, h: 5, lean:  1 },
+                { sx: 21, baseY: 6, h: 5, lean:  1 },
+                { sx: 23, baseY: 7, h: 5, lean:  1 },
+                { sx: 25, baseY: 8, h: 4, lean:  1 },
             ];
             for (const s of spikes) {
                 const sx = x + s.sx;
                 const sbase = by + s.baseY;
                 ctx.fillStyle = BODY;
-                // Base row (2 wide)
                 ctx.fillRect(sx - 1, sbase, 2, 1);
-                // Middle rows (1 wide, leaning subtly)
                 for (let i = 1; i < s.h - 1; i++) {
                     const off = Math.round(s.lean * i * 0.4);
                     ctx.fillRect(sx + off, sbase - i, 1, 1);
                 }
-                // Lighter tip pixel
                 ctx.fillStyle = SPIKE_TIP;
                 const tipOff = Math.round(s.lean * (s.h - 1) * 0.4);
                 ctx.fillRect(sx + tipOff, sbase - (s.h - 1), 1, 1);
@@ -731,50 +869,39 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
 
             // === BODY DOME (curved top, flat belly) ===
             ctx.fillStyle = BODY;
-            // Rounded top (narrow → wide as we descend)
-            ctx.fillRect(x + 7,  by + 10, 12, 1);
-            ctx.fillRect(x + 5,  by + 11, 16, 1);
-            ctx.fillRect(x + 4,  by + 12, 18, 1);
-            ctx.fillRect(x + 3,  by + 13, 20, 1);
-            // Main body mass
-            ctx.fillRect(x + 2,  by + 14, 22, 8); // rows 14..21
-            // Belly curve (narrowing toward ground)
-            ctx.fillRect(x + 3,  by + 22, 20, 1);
-            ctx.fillRect(x + 5,  by + 23, 16, 1);
-            // Subtle belly shading line
+            ctx.fillRect(x + 7,  by + 5,  12, 1);
+            ctx.fillRect(x + 5,  by + 6,  16, 1);
+            ctx.fillRect(x + 4,  by + 7,  18, 1);
+            ctx.fillRect(x + 3,  by + 8,  20, 1);
+            ctx.fillRect(x + 2,  by + 9,  22, 8);
+            ctx.fillRect(x + 3,  by + 17, 20, 1);
+            ctx.fillRect(x + 5,  by + 18, 16, 1);
             ctx.fillStyle = BODY_DARK;
-            ctx.fillRect(x + 6,  by + 23, 14, 1);
+            ctx.fillRect(x + 6,  by + 18, 14, 1);
 
-            // === HEAD (lighter gray, extends to the right) ===
+            // === HEAD (small, snouty — tucked against body, not tortoise-sized) ===
             ctx.fillStyle = FACE;
-            ctx.fillRect(x + 23, by + 14, 6, 1); // top
-            ctx.fillRect(x + 22, by + 15, 8, 5); // 8w × 5h main
-            ctx.fillRect(x + 23, by + 20, 6, 1); // bottom
-            // Snout extending right
-            ctx.fillRect(x + 29, by + 16, 2, 3);
+            ctx.fillRect(x + 25, by + 12, 4, 4); // small 4×4 head
+            ctx.fillRect(x + 29, by + 13, 2, 2); // short snout
 
-            // Small pointed ear (dark, sits on top-left of head)
+            // Tiny ear
             ctx.fillStyle = BODY;
-            ctx.fillRect(x + 22, by + 13, 2, 2);
-            ctx.fillRect(x + 23, by + 12, 1, 1); // ear tip
+            ctx.fillRect(x + 25, by + 11, 1, 1);
 
             // Eye
             ctx.fillStyle = '#000';
-            ctx.fillRect(x + 25, by + 16, 2, 2);
-            ctx.fillStyle = '#fff';
-            ctx.fillRect(x + 26, by + 16, 1, 1); // glint
+            ctx.fillRect(x + 27, by + 13, 1, 1);
 
             // Nose at the snout tip
-            ctx.fillStyle = '#000';
-            ctx.fillRect(x + 30, by + 17, 1, 1);
+            ctx.fillRect(x + 30, by + 14, 1, 1);
 
             // === LEGS (small, alternating step) ===
             const lp = Math.sin(frameCount * 0.3);
             const legA = lp > 0 ? 1 : 0;
             const legB = 1 - legA;
             ctx.fillStyle = BODY_DARK;
-            ctx.fillRect(x + 6,  by + 24 - legA, 2, 2 + legA); // back leg
-            ctx.fillRect(x + 19, by + 24 - legB, 2, 2 + legB); // front leg
+            ctx.fillRect(x + 6,  by + 19 - legA, 2, 2 + legA);
+            ctx.fillRect(x + 19, by + 19 - legB, 2, 2 + legB);
         }
 
         // Draw abyss
@@ -887,17 +1014,7 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
             ctx.fillStyle = '#6a6a6a';
             ctx.fillRect(platform.x, platform.y, platform.width, 1);
 
-            ctx.strokeStyle = '#2a2a2a';
-            ctx.lineWidth = 2;
-
-            for (let i = 0; i < 3; i++) {
-                ctx.strokeRect(platform.x + 5, platform.y + 10 + i * 8, 3, 6);
-            }
-
-            for (let i = 0; i < 3; i++) {
-                ctx.strokeRect(platform.x + platform.width - 8, platform.y + 10 + i * 8, 3, 6);
-            }
-
+            // Rivets along the top of the plank (no vertical pillars)
             ctx.fillStyle = '#2a2a2a';
             for (let i = 0; i < platform.width / 10; i++) {
                 ctx.fillRect(platform.x + 5 + i * 10, platform.y + 5, 2, 2);
@@ -935,6 +1052,28 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
 
             ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
             ctx.fillRect(x + 2, y + 7, 2, 12);
+        }
+
+        // Draw red cross collectible — 20×20 X that mirrors the DNF logo aesthetic.
+        // Picking it up triggers the 5-second slow-motion effect.
+        function drawRedCrossCollectible(x, y) {
+            // Thick X — two stepped diagonals of 4×4 blocks
+            ctx.fillStyle = '#d32020';
+            for (let i = 0; i < 5; i++) {
+                ctx.fillRect(x + i * 4,       y + i * 4, 4, 4); // TL → BR
+                ctx.fillRect(x + 16 - i * 4,  y + i * 4, 4, 4); // TR → BL
+            }
+            // Darker center where diagonals overlap
+            ctx.fillStyle = '#8a1010';
+            ctx.fillRect(x + 8, y + 8, 4, 4);
+            // Splatter pixels around the X for visual flair (no bounding box)
+            ctx.fillStyle = '#d32020';
+            ctx.fillRect(x - 1,  y + 2,  1, 1);
+            ctx.fillRect(x + 20, y + 2,  1, 1);
+            ctx.fillRect(x + 2,  y + 18, 1, 1);
+            ctx.fillRect(x + 17, y - 1,  1, 1);
+            ctx.fillRect(x + 10, y - 2,  1, 1);
+            ctx.fillRect(x + 10, y + 21, 1, 1);
         }
 
         // Draw ground
@@ -1007,6 +1146,45 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
             ctx.fillText(`${metrics.pace} /km`, 20, 63);
             ctx.fillText(`Lives: ${lives}`, 20, 82);
             // Beers counter removed from display but still tracked in background
+
+            // Stroboscope — flashlight-intensity white blasts alternating with dark frames.
+            // Full intensity during the slow phase, fading to zero during recovery.
+            if (slowFramesLeft > 0) {
+                const fade = slowFramesLeft > SLOW_RECOVERY
+                    ? 1
+                    : (slowFramesLeft / SLOW_RECOVERY);
+                // ~7.5 Hz strobe (every 8 frames): 3 frames near-solid white, 2 frames dark
+                const phase = frameCount % 8;
+                if (phase < 3) {
+                    // Blinding white flash (like a camera flashlight)
+                    ctx.fillStyle = `rgba(255, 255, 255, ${0.95 * fade})`;
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                } else if (phase === 3) {
+                    // Brief afterglow
+                    ctx.fillStyle = `rgba(255, 255, 255, ${0.35 * fade})`;
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                } else if (phase === 5 || phase === 6) {
+                    // Darken between flashes — enhances the strobe punch
+                    ctx.fillStyle = `rgba(0, 0, 0, ${0.55 * fade})`;
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                }
+            }
+
+            // Slowdown indicator (visible while red cross effect is active)
+            if (slowFramesLeft > 0) {
+                const label = 'SLOW';
+                const secondsLeft = (slowFramesLeft / 60).toFixed(1);
+                ctx.fillStyle = '#d32020';
+                ctx.font = 'bold 14px Courier New';
+                ctx.fillText(`${label}  ${secondsLeft}s`, 20, 104);
+                // Small timer bar
+                const barW = 100;
+                const frac = Math.min(1, slowFramesLeft / (SLOW_DURATION + SLOW_RECOVERY));
+                ctx.fillStyle = 'rgba(211, 32, 32, 0.25)';
+                ctx.fillRect(20, 110, barW, 4);
+                ctx.fillStyle = '#d32020';
+                ctx.fillRect(20, 110, barW * frac, 4);
+            }
 
             // Achievement notification
             if (achievementTimer > 0) {
@@ -1149,12 +1327,12 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
                 obstacles.push({
                     type: OBSTACLE_TYPES.HEDGEHOG,
                     x: canvas.width,
-                    y: groundY - 27,
+                    y: groundY - 22,
                     width: 31,
-                    height: 27,
-                    moveDirection: Math.random() > 0.5 ? 1 : -1, // Random direction
-                    moveSpeed: 0.5 + Math.random() * 1, // Random speed
-                    moveRange: 30 + Math.random() * 20, // How far they move
+                    height: 22,
+                    moveDirection: Math.random() > 0.5 ? 1 : -1,
+                    moveSpeed: 0.5 + Math.random() * 1,
+                    moveRange: 30 + Math.random() * 20,
                     originalX: canvas.width,
                     offsetX: 0
                 });
@@ -1224,13 +1402,14 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
         }
 
         // Create collectible
-        function createCollectible() {
+        function createCollectible(type = 'beer') {
             collectibles.push({
                 x: canvas.width,
                 y: groundY - 70 - Math.random() * 40,
                 width: 20,
-                height: 30,
-                collected: false
+                height: type === 'cross' ? 20 : 30,
+                collected: false,
+                type: type
             });
         }
 
@@ -1276,8 +1455,23 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
             if (damageFlash > 0) damageFlash--;
             if (achievementTimer > 0) achievementTimer--;
 
-            if (frameCount % 180 === 0) {
-                gameSpeed += 0.3;
+            // Speed ramp — small increase every 1.5 seconds.
+            // Pause progression while a red-cross slowdown is active so the speed
+            // returns to EXACTLY what it was before the pickup when the effect ends.
+            if (frameCount % 90 === 0 && slowFramesLeft === 0) {
+                baseGameSpeed += 0.4;
+            }
+
+            // Derive effective gameSpeed from baseGameSpeed, applying any active slowdown.
+            // First (slowFramesLeft > SLOW_RECOVERY) frames: full slow. Final SLOW_RECOVERY: ramp back.
+            if (slowFramesLeft > 0) {
+                slowFramesLeft--;
+                const mult = slowFramesLeft > SLOW_RECOVERY
+                    ? SLOW_FACTOR
+                    : SLOW_FACTOR + (1 - SLOW_FACTOR) * (1 - slowFramesLeft / SLOW_RECOVERY);
+                gameSpeed = baseGameSpeed * mult;
+            } else {
+                gameSpeed = baseGameSpeed;
             }
 
             // Update metrics during gameplay only
@@ -1335,29 +1529,31 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
                 player.velocityY = 0;
             }
 
-            if (frameCount % Math.max(60, 100 - Math.floor(score / 2)) === 0) {
+            if (frameCount % Math.max(30, 50 - Math.floor(score / 4)) === 0) {
                 createObstacle();
             }
 
-            if (frameCount % 600 === 0 && Math.random() > 0.3) {
-                createCollectible();
+            if (frameCount % 300 === 0 && Math.random() > 0.3) {
+                createCollectible('beer');
+            }
+            // Red cross spawner — speed-based. First one at 15 km/h, then every +1 km/h.
+            // Uses baseGameSpeed (progression speed) so slowdown doesn't trigger extra ones.
+            const currentDisplayKmH = 8 + (baseGameSpeed - 6) * 0.8;
+            if (currentDisplayKmH >= nextCrossSpeedKmH) {
+                createCollectible('cross');
+                nextCrossSpeedKmH += 1;
             }
 
             for (let i = obstacles.length - 1; i >= 0; i--) {
                 // Move obstacle left (scrolling)
                 obstacles[i].x -= gameSpeed;
 
-                // Move hedgehogs horizontally (up and down movement)
+                // Hedgehogs sway side-to-side on top of the scroll
                 if (obstacles[i].type === OBSTACLE_TYPES.HEDGEHOG) {
-                    // Update horizontal offset
                     obstacles[i].offsetX += obstacles[i].moveDirection * obstacles[i].moveSpeed;
-
-                    // Reverse direction when reaching movement range
                     if (Math.abs(obstacles[i].offsetX) > obstacles[i].moveRange) {
                         obstacles[i].moveDirection *= -1;
                     }
-
-                    // Add horizontal movement on top of scrolling
                     obstacles[i].x += obstacles[i].moveDirection * obstacles[i].moveSpeed;
                 }
 
@@ -1391,10 +1587,23 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
                 }
 
                 if (!collectibles[i].collected && checkCollision(player, collectibles[i])) {
-                    lives++;
-                    sessionBeersCollected++;
-                    totalBeersCollected++;
-                    checkAchievements();
+                    if (collectibles[i].type === 'cross') {
+                        // Red cross: trigger slowdown (or extend existing one).
+                        // If we're currently in recovery (or not slowed), restart with full
+                        // SLOW_DURATION + SLOW_RECOVERY. If still in full slow, stack +SLOW_DURATION.
+                        if (slowFramesLeft <= SLOW_RECOVERY) {
+                            slowFramesLeft = SLOW_DURATION + SLOW_RECOVERY;
+                        } else {
+                            slowFramesLeft += SLOW_DURATION;
+                        }
+                        if (slowFramesLeft > SLOW_MAX_FRAMES) slowFramesLeft = SLOW_MAX_FRAMES;
+                    } else {
+                        // Beer: extra life + achievement tracking
+                        lives++;
+                        sessionBeersCollected++;
+                        totalBeersCollected++;
+                        checkAchievements();
+                    }
                     collectibles[i].collected = true;
                     collectibles.splice(i, 1);
                 }
@@ -1427,7 +1636,8 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
 
                 collectibles.forEach(col => {
                     if (!col.collected) {
-                        drawBeer(col.x, col.y);
+                        if (col.type === 'cross') drawRedCrossCollectible(col.x, col.y);
+                        else                      drawBeer(col.x, col.y);
                     }
                 });
 
@@ -1448,7 +1658,8 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
                 });
                 collectibles.forEach(col => {
                     if (!col.collected) {
-                        drawBeer(col.x, col.y);
+                        if (col.type === 'cross') drawRedCrossCollectible(col.x, col.y);
+                        else                      drawBeer(col.x, col.y);
                     }
                 });
                 drawPlayer();
@@ -1479,6 +1690,9 @@ Note: HTML files cannot run directly from Telegram - they must be opened in a we
         // Reset game
         function resetGame() {
             gameSpeed = 6;
+            baseGameSpeed = 6;
+            slowFramesLeft = 0;
+            nextCrossSpeedKmH = 10;
             score = 0;
             lives = 1;
             frameCount = 0;
